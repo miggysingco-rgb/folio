@@ -234,7 +234,14 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 .textLayer > :not(.markedContent),.textLayer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--text-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
 .textLayer span.markedContent{top:0;height:0}
 .textLayer span[role="img"]{user-select:none;cursor:default}
-.textLayer ::selection{background:rgba(46,85,230,.28)}
+.textLayer ::selection{background:transparent}
+.textLayer ::-moz-selection{background:transparent}
+/* clean, Adobe-style selection: Folio draws one even band per line (selHl) instead of the browser's overlapping span boxes */
+.selhl{position:absolute;left:0;top:0;width:0;height:0;z-index:1;pointer-events:none;mix-blend-mode:multiply}
+.selhl i{position:absolute;display:block;background:#A9C8FF;border-radius:2px}
+/* saved text highlights: drawn like a real highlighter (multiply), so the words under them stay black */
+.hl-layer{position:absolute;inset:0;z-index:4;pointer-events:none;mix-blend-mode:multiply}
+.hl-layer .it-mark i{border-radius:1.5px}
 .textLayer br::selection{background:transparent}
 .textLayer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:0;cursor:default;user-select:none}
 .textLayer.selecting .endOfContent{top:0}
@@ -4409,6 +4416,9 @@ function fontFor(it){if(it.type==='pdftext')return PDF_FAM[it.font]||PDF_FAM.san
 function fontWeightOf(it){return it.bold?'700':it.font==='hand'?'600':'400'}
 function canvasFont(it,px){return(it.italic?'italic ':'')+fontWeightOf(it)+' '+px+'px '+fontFor(it)}
 const UNDER=new Set(['mark','cover','redact']);
+/* text highlights are shown on screen by the hl-layer (multiply); the canvas still draws them for thumbnails and export */
+const isHlMark=it=>it.type==='mark'&&it.style!=='ul'&&it.style!=='st';
+function hlTint(c,a){const m=/^#?([0-9a-f]{6})$/i.exec(c||'');if(!m)return c||'#FFE89C';const n=parseInt(m[1],16);return'rgb('+[n>>16,(n>>8)&255,n&255].map(v=>Math.round(255-(255-v)*a)).join(',')+')'}
 function wrapLines(ctx,text,maxW){const out=[];for(const para of String(text||'').split('\n')){const words=para.split(/(\s+)/);let line='';for(const w of words){const t=line+w;if(ctx.measureText(t).width>maxW&&line.trim()){out.push(line.trimEnd());line=w.trimStart()}else line=t}out.push(line)}return out}
 /* text laid out like the page: line boxes of size×lineHeight, baseline a little below each line's middle */
 function drawTextItem(ctx,it,s){const fs=(it.size||24)*s,lh=(it.lh||1.3)*fs;ctx.fillStyle=it.c||'#16202B';ctx.font=canvasFont(it,fs);ctx.textBaseline='alphabetic';
@@ -4588,11 +4598,11 @@ function buildPages(){if(!E.pagesEl)return;const frag=document.createDocumentFra
   E.pagesEl.innerHTML='';E.pagesEl.append(frag);layoutAll();if(E.showThumbs)buildThumbs();onScroll()}
 function makeView(id){const el=h('div',{class:'pg',dataset:{id}});const inner=h('div',{class:'pg-inner'});
   const bg=h('canvas',{class:'bg'}),ink=h('canvas',{class:'ink',style:{zIndex:3}}),live=h('canvas',{class:'live',style:{zIndex:5}});try{live.getContext('2d',{desynchronized:true})}catch(e){}
-  const tl=h('div',{class:'textLayer'}),items=h('div',{class:'items'}),notes=h('div',{class:'items',style:{zIndex:7}}),edl=h('div',{class:'edl'}),skel=h('div',{class:'pg-skel'});
+  const tl=h('div',{class:'textLayer'}),hl=h('div',{class:'hl-layer'}),items=h('div',{class:'items'}),notes=h('div',{class:'items',style:{zIndex:7}}),edl=h('div',{class:'edl'}),skel=h('div',{class:'pg-skel'});
   const cap=h('div',{class:'capture'+(fingerDraws()?'':' finger-off')});cap.hidden=capOff();
-  inner.append(bg,tl,ink,items,live,cap,notes,edl);const label=h('div',{class:'pg-label'});
+  inner.append(bg,tl,ink,hl,items,live,cap,notes,edl);const label=h('div',{class:'pg-label'});
   const tools=E.readOnly?null:h('div',{class:'pg-tools'},h('button',{class:'ib','aria-label':'Page options',onclick:e=>{e.stopPropagation();pageMenu(e.currentTarget,id)}},ico('more')));
-  el.append(skel,inner,label,tools);const pv={id,el,inner,bg,ink,live,tl,items,notes,edl,skel,cap,label,rendered:false,visible:false,token:0};
+  el.append(skel,inner,label,tools);const pv={id,el,inner,bg,ink,live,tl,hl,items,notes,edl,skel,cap,label,rendered:false,visible:false,token:0};
   tl.addEventListener('pointerdown',()=>{tl.classList.add('selecting');prevRange=null;const off=()=>{tl.classList.remove('selecting');const eoc=$('.endOfContent',tl);if(eoc)tl.append(eoc);removeEventListener('pointerup',off)};addEventListener('pointerup',off)});
   cap.addEventListener('pointerdown',e=>down(e,pv));cap.addEventListener('lostpointercapture',e=>{if(E.ptr&&E.ptr.id===e.pointerId&&!E.ptr.lostOk)setTimeout(()=>{if(E.ptr&&E.ptr.id===e.pointerId)finishPtr(E.ptr)},50)});cap.addEventListener('pointerleave',e=>{if(!E.ptr&&e.pointerType==='pen')clearLive(pv)});
   const noStylusScroll=e=>{if(E.tool!=='select'&&e.cancelable&&[...e.changedTouches].some(t=>t.touchType==='stylus'))e.preventDefault()};cap.addEventListener('touchstart',noStylusScroll,{passive:false});cap.addEventListener('touchmove',noStylusScroll,{passive:false});cap.addEventListener('pointermove',e=>move(e,pv));cap.addEventListener('pointerup',e=>up(e,pv));cap.addEventListener('pointercancel',e=>up(e,pv,true));
@@ -4669,8 +4679,8 @@ async function renderTextLayer(pv,pg){pv.tlDone=true;try{const lib=await pdfjs()
   pv.tl.innerHTML='';pv.tl.style.setProperty('--scale-factor',vp.scale);pv.tl.style.setProperty('--total-scale-factor',vp.scale);
   const tl=new lib.TextLayer({textContentSource:p.streamTextContent(),container:pv.tl,viewport:vp});await tl.render();pv.tl.append(h('div',{class:'endOfContent'}));markHits(pv)}catch(e){console.warn('text layer',e)}}
 function drawInk(pv,exclude){const pg=E.pages.get(pv.id);if(!pg||!pv.ink.width)return;const c=pv.ink.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pv.ink.width,pv.ink.height);
-  const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under'});drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s);if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
-let scrollRaf=0;function onScroll(){if(scrollRaf)return;scrollRaf=requestAnimationFrame(()=>{scrollRaf=0;scrollWork()})}
+  const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under',skip:isHlMark});drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s);if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
+let scrollRaf=0;function onScroll(){if(selHlOn.size)schedSelHl();if(scrollRaf)return;scrollRaf=requestAnimationFrame(()=>{scrollRaf=0;scrollWork()})}
 function scrollWork(){if(!E.scroller||!E.nid)return;E.scrollBusyUntil=Date.now()+200;const sc=E.scroller,mid=sc.scrollTop+sc.clientHeight/2;
   if(E.offs.length!==E.order.length||E.offs.some(o=>!o))measureOffs();const O=E.offs;let lo=0,hi=O.length-1;
   while(lo<hi){const m=(lo+hi)>>1;if(O[m]&&O[m][1]<mid)lo=m+1;else hi=m}let best=lo;
@@ -4905,12 +4915,12 @@ function showPop(x,y,el){closePop();const p=h('div',{class:'pop'},el);document.b
   setTimeout(()=>{const outside=e=>{if(popEl&&!popEl.contains(e.target)&&!e.target.closest('.it-note')){closePop();document.removeEventListener('pointerdown',outside,true)}};document.addEventListener('pointerdown',outside,true)});return p}
 
 /* ---------- items (text boxes, comments, stamps, signatures, images, text highlights, PDF edits) ---------- */
-function renderItems(pv){const pg=E.pages.get(pv.id);const ed=E.editing&&E.editing.pv===pv?E.editing:null;pv.items.innerHTML='';pv.notes.innerHTML='';if(!pg)return;
-  for(const it of pg.items||[]){if(it.type==='mark'){pv.items.append(markEl(pv,it));continue}
+function renderItems(pv){const pg=E.pages.get(pv.id);const ed=E.editing&&E.editing.pv===pv?E.editing:null;pv.items.innerHTML='';pv.notes.innerHTML='';if(pv.hl)pv.hl.innerHTML='';if(!pg)return;
+  for(const it of pg.items||[]){if(it.type==='mark'){(isHlMark(it)&&pv.hl?pv.hl:pv.items).append(markEl(pv,it));continue}
     if(ed&&ed.it.id===it.id){ed.it=it;pv.notes.append(ed.el);continue}
     const el=itemEl(pv,it);if(!el)continue;(it.type==='note'?pv.notes:pv.items).append(el)}placeItems(pv)}
 function placeItems(pv){const s=pv.s;if(!s)return;const pg=E.pages.get(pv.id);const byId=new Map((pg&&pg.items||[]).map(i=>[i.id,i]));
-  for(const el of [...pv.items.children,...pv.notes.children]){const it=byId.get(el.dataset.id);if(!it)continue;
+  for(const el of [...pv.items.children,...pv.notes.children,...(pv.hl?pv.hl.children:[])]){const it=byId.get(el.dataset.id);if(!it)continue;
   if(it.type==='mark'){[...el.children].forEach((r,i)=>{const q=it.rects[i];if(!q)return;Object.assign(r.style,{left:q[0]*s+'px',top:q[1]*s+'px',width:q[2]*s+'px',height:q[3]*s+'px'})});el.style.left=el.style.top='0';continue}
   if(it.type==='wm'){const H=((pg&&pg.aspect)||PAGE_ASPECT)*1000;el.style.left=500*s+'px';el.style.top=H/2*s+'px';el.style.fontSize=(it.size||110)*s+'px';continue}
   el.style.left=it.x*s+'px';el.style.top=it.y*s+'px';
@@ -4937,10 +4947,10 @@ function itemEl(pv,it){let el;const common={class:'it it-'+it.type+(it.type==='r
     el.addEventListener('pointerdown',e=>itemDown(e,pv,it,el))}
   return el}
 function markEl(pv,it){const el=h('div',{class:'it it-mark',dataset:{id:it.id}});for(const q of it.rects||[]){const r=h('i',{title:(it.note?it.note+' · ':'')+'Click for options'});
-  if(it.style==='ul')r.style.borderBottom='2px solid '+(it.c||'#E03131');else if(it.style==='st')r.style.background=`linear-gradient(transparent 46%, ${it.c||'#E03131'} 46%, ${it.c||'#E03131'} 58%, transparent 58%)`;
+  if(it.style==='ul')r.style.borderBottom='2px solid '+(it.c||'#E03131');else if(it.style==='st')r.style.background=`linear-gradient(transparent 46%, ${it.c||'#E03131'} 46%, ${it.c||'#E03131'} 58%, transparent 58%)`;else r.style.background=hlTint(it.c||'#FFD43B',.4);
   r.addEventListener('click',e=>{e.stopPropagation();if(E.tool!=='select')return;const [x,y]=[e.clientX,e.clientY];markMenu(pv,it,x,y)});el.append(r)}
   return el}
-function markMenu(pv,it,x,y){showFloat(x,y-8,[{icon:'note',label:it.note?'Edit comment':'Add comment',fn:()=>{hideFloat();markComment(pv,it,x,y)}},...HL_COLORS.slice(0,4).map(c=>({color:c,label:'Color',fn:()=>{pushUndo(pv.id);it.c=c;drawInk(pv);markDirty(pv.id);hideFloat()}})),{icon:'trash',label:'Remove highlight',fn:()=>{removeItem(pv,it.id);hideFloat()}}])}
+function markMenu(pv,it,x,y){showFloat(x,y-8,[{icon:'note',label:it.note?'Edit comment':'Add comment',fn:()=>{hideFloat();markComment(pv,it,x,y)}},...HL_COLORS.slice(0,4).map(c=>({color:c,label:'Color',fn:()=>{pushUndo(pv.id);it.c=c;drawInk(pv);renderItems(pv);markDirty(pv.id);hideFloat()}})),{icon:'trash',label:'Remove highlight',fn:()=>{removeItem(pv,it.id);hideFloat()}}])}
 function markComment(pv,it,x,y){const ta=h('textarea',{id:'mark-note','aria-label':'Comment'},it.note||'');const p=showPop(x,y+12,h('div',null,h('div',{class:'ttl'},h('span',null,'Comment on highlight')),it.text?h('div',{style:{fontSize:'12.5px',color:'var(--muted)',marginBottom:'6px',fontStyle:'italic'}},'“'+it.text.slice(0,140)+(it.text.length>140?'…':'')+'”'):null,ta,
   h('div',{class:'acts'},h('span'),h('button',{class:'btn sm primary',onclick:()=>{pushUndo(pv.id);it.note=ta.value.trim();markDirty(pv.id);renderItems(pv);closePop();if(E.panel==='comments')renderPanel()}},'Save'))));ta.focus()}
 function removeItem(pv,id){if(E.editing&&E.editing.it.id===id){E.editing.removed=true;commitEdit()}const pg=E.pages.get(pv.id);pushUndo(pv.id);pg.items=(pg.items||[]).filter(i=>i.id!==id);if(E.itemSel&&E.itemSel.id===id){E.itemSel=null;hideFmtBar()}
@@ -5139,6 +5149,35 @@ async function watermarkDialog(){if(E.readOnly)return;commitEdit();const txt=h('
     if(r!=='remove')pg.items.unshift({id:uid(),type:'wm',text:r.text,c:r.c,op:r.op,rot:r.rot,size:r.size});const pv=E.views.get(id);if(pv&&pv.rendered)renderItems(pv);markDirty(id)}
   toast(r==='remove'?'Watermark removed':'Watermark added to every page')}
 
+/* ---------- clean text selection (Adobe-style) ----------
+   The browser paints every pdf.js text span on its own, so spans overlap (darker stripes) and differ in height.
+   Instead: collect the selected text's boxes on each page, merge them into one band per line (no gaps, no overlaps),
+   and draw those bands. Saved highlights use the same bands. */
+function mergeLines(raw){raw=raw.filter(q=>q.w>.3&&q.h>.8).sort((a,b)=>a.y-b.y||a.x-b.x);const lines=[];
+  for(const q of raw){const L=lines.find(l=>{const ov=Math.min(l.y+l.h,q.y+q.h)-Math.max(l.y,q.y),gap=Math.max(l.h,q.h)*1.6;return ov>=Math.min(l.h,q.h)*.5&&q.x<=l.x+l.w+gap&&q.x+q.w>=l.x-gap});
+    if(L){const x=Math.min(L.x,q.x),y=Math.min(L.y,q.y);L.w=Math.max(L.x+L.w,q.x+q.w)-x;L.h=Math.max(L.y+L.h,q.y+q.h)-y;L.x=x;L.y=y}else lines.push({x:q.x,y:q.y,w:q.w,h:q.h})}
+  lines.sort((a,b)=>a.y-b.y||a.x-b.x);
+  /* neighbouring lines that touch: split the overlap in the middle so bands never stack */
+  for(let i=0;i<lines.length;i++)for(let j=i+1;j<lines.length;j++){const a=lines[i],b=lines[j];if(Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x)<=0)continue;const ov=a.y+a.h-b.y;
+    if(ov>0&&ov<Math.min(a.h,b.h)*.5){const m=b.y+ov/2;a.h=m-a.y;b.h=b.y+b.h-m;b.y=m}}
+  return lines}
+function pvTextLayer(pv){return pv.inner&&pv.inner.querySelector('.textLayer')}
+/* selected text on one page → merged line bands in page units */
+function selRectsL(pv,range){const tl=pvTextLayer(pv);if(!tl||!range.intersectsNode(tl))return[];const pr=pv.el.getBoundingClientRect();const raw=[];const r=document.createRange();
+  const tw=document.createTreeWalker(tl,NodeFilter.SHOW_TEXT);let n,seen=false;
+  while((n=tw.nextNode())){if(!range.intersectsNode(n)){if(seen)break;continue}seen=true;if(!n.nodeValue)continue;
+    r.selectNodeContents(n);if(n===range.startContainer)r.setStart(n,range.startOffset);if(n===range.endContainer)r.setEnd(n,range.endOffset);if(r.collapsed)continue;
+    for(const c of r.getClientRects()){const x1=Math.max(c.left,pr.left),x2=Math.min(c.right,pr.right),y1=Math.max(c.top,pr.top),y2=Math.min(c.bottom,pr.bottom);if(x2-x1<.5||y2-y1<1)continue;
+      const a=clientToL(pv,x1,y1),b=clientToL(pv,x2,y2);raw.push({x:Math.min(a[0],b[0]),y:Math.min(a[1],b[1]),w:Math.abs(b[0]-a[0]),h:Math.abs(b[1]-a[1])})}}
+  return mergeLines(raw)}
+let selHlRaf=0;const selHlOn=new Set();
+function schedSelHl(){if(selHlRaf)return;selHlRaf=requestAnimationFrame(()=>{selHlRaf=0;try{drawSelHl()}catch(e){console.warn('selection',e)}})}
+function drawSelHl(){const sel=getSelection();const range=sel&&sel.rangeCount&&!sel.isCollapsed?sel.getRangeAt(0):null;const used=new Set();
+  if(range&&E.nid)for(const pv of E.views.values()){if(!pv.inner)continue;const tl=pvTextLayer(pv);if(!tl||!range.intersectsNode(tl))continue;const bands=selRectsL(pv,range);if(!bands.length)continue;
+    let ov=pv.selhl;if(!ov||ov.parentNode!==pv.inner){ov=pv.selhl=h('div',{class:'selhl'});pv.inner.append(ov)}const s=pv.s||1;
+    ov.replaceChildren(...bands.map(q=>{const i=document.createElement('i');i.style.cssText=`left:${q.x*s}px;top:${q.y*s}px;width:${q.w*s}px;height:${q.h*s}px`;return i}));used.add(pv)}
+  for(const pv of selHlOn)if(!used.has(pv)&&pv.selhl)pv.selhl.replaceChildren();selHlOn.clear();for(const pv of used)selHlOn.add(pv)}
+
 /* PDF text selection → highlight / underline / strikethrough / comment / ask AI */
 let selT=null,prevRange=null;
 /* keeps a drag-selection from jumping to the end of the page (same approach as the pdf.js viewer) */
@@ -5146,16 +5185,13 @@ function pinSelection(){const tl=$('.textLayer.selecting');if(!tl)return;const s
   const modStart=prevRange&&(range.compareBoundaryPoints(Range.END_TO_END,prevRange)===0||range.compareBoundaryPoints(Range.START_TO_END,prevRange)===0);
   let anchor=modStart?range.startContainer:range.endContainer;if(anchor.nodeType===3)anchor=anchor.parentNode;const eoc=$('.endOfContent',tl);
   if(eoc&&anchor&&anchor.parentElement&&anchor.parentElement.closest('.textLayer')===tl)anchor.parentElement.insertBefore(eoc,modStart?anchor:anchor.nextSibling);prevRange=range.cloneRange()}
-function onSelChange(){pinSelection();clearTimeout(selT);if(E.tool!=='select')return;selT=setTimeout(()=>{const sel=getSelection();if(!sel||sel.isCollapsed||!sel.rangeCount){if(floatEl&&floatEl.dataset.kind==='text')hideFloat();return}
+function onSelChange(){pinSelection();schedSelHl();clearTimeout(selT);if(E.tool!=='select')return;selT=setTimeout(()=>{const sel=getSelection();if(!sel||sel.isCollapsed||!sel.rangeCount){if(floatEl&&floatEl.dataset.kind==='text')hideFloat();return}
   const node=sel.anchorNode&&(sel.anchorNode.nodeType===1?sel.anchorNode:sel.anchorNode.parentElement);const tl=node&&node.closest('.textLayer');if(!tl)return;const pgEl=tl.closest('.pg');const pv=E.views.get(pgEl.dataset.id);if(!pv)return;
   const range=sel.getRangeAt(0);const br=range.getBoundingClientRect();const text=sel.toString().trim();if(!text)return;
   const acts=[];if(!E.readOnly)acts.push({icon:'marker',label:'Highlight',fn:()=>makeMark(pv,range,text,'hl')},{icon:'under',label:'Underline',fn:()=>makeMark(pv,range,text,'ul')},{icon:'strike',label:'Strikethrough',fn:()=>makeMark(pv,range,text,'st')},{icon:'note',label:'Highlight and comment',fn:()=>{const it=makeMark(pv,range,text,'hl');if(it)markComment(pv,it,br.left,br.bottom)}});
   acts.push({icon:'copy',label:'Copy',fn:async()=>{try{await navigator.clipboard.writeText(text);toast('Copied')}catch(e){toast('Copy is blocked here. Use Ctrl+C.')}hideFloat()}},{icon:'spark',label:'Explain with AI',fn:()=>{hideFloat();getSelection().removeAllRanges();openAI('Explain this passage in plain language, then give the one fact most likely to be tested:\n\n"'+text.slice(0,4000)+'"')}});
   showFloat(br.left+br.width/2,br.top-8,acts);if(floatEl)floatEl.dataset.kind='text'},260)}
-function makeMark(pv,range,text,style){const rects=[];const pr=pv.el.getBoundingClientRect();
-  for(const r of range.getClientRects()){if(r.width<1||r.height<2)continue;const x1=Math.max(r.left,pr.left),x2=Math.min(r.right,pr.right),y1=Math.max(r.top,pr.top),y2=Math.min(r.bottom,pr.bottom);if(x2<=x1||y2<=y1)continue;
-    const a=clientToL(pv,x1,y1),b=clientToL(pv,x2,y2);const x=Math.min(a[0],b[0]),y=Math.min(a[1],b[1]),w=Math.abs(b[0]-a[0]),hh=Math.abs(b[1]-a[1]);
-    const prev=rects.find(q=>Math.abs(q[1]-y)<hh*.4&&Math.abs(q[3]-hh)<hh*.5&&x<=q[0]+q[2]+6&&x+w>=q[0]-6);if(prev){const nx=Math.min(prev[0],x);prev[2]=Math.max(prev[0]+prev[2],x+w)-nx;prev[0]=nx}else rects.push([x,y,w,hh])}
+function makeMark(pv,range,text,style){const rects=selRectsL(pv,range).map(q=>[q.x,q.y,q.w,q.h]);
   getSelection().removeAllRanges();hideFloat();if(!rects.length)return null;const pg=E.pages.get(pv.id);pushUndo(pv.id);
   const it={id:uid(),type:'mark',style,c:style==='hl'?E.tp.hl.c:'#E03131',rects:rects.map(q=>q.map(v=>Math.round(v*10)/10)),text:text.slice(0,2000),at:Date.now()};(pg.items=pg.items||[]).push(it);drawInk(pv);renderItems(pv);markDirty(pv.id);return it}
 
