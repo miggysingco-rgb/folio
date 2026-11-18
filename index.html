@@ -191,6 +191,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 .pg-inner canvas{position:absolute;left:0;top:0;display:block}
 .pg-inner canvas.ink,.pg-inner canvas.live{pointer-events:none}
 .capture{position:absolute;inset:0;z-index:6;touch-action:none;cursor:crosshair}
+.ed.t-hand .scroller,.ed.t-hand .pages *,.ed.hand-tmp .scroller,.ed.hand-tmp .pages *{cursor:grab}
+.ed.panning,.ed.panning *{cursor:grabbing!important}
+.ed.t-hand .pages,.ed.hand-tmp .pages{-webkit-user-select:none;user-select:none}
+.ed.t-hand .pages button,.ed.hand-tmp .pages button{cursor:pointer}
 .capture.finger-off{touch-action:none}
 .capture{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 .ed .scroller{touch-action:pan-x pan-y}
@@ -3853,6 +3857,7 @@ const IC={
  stamp:'<path d="M5 22h14"/><path d="M19.3 14.4A2 2 0 0 0 18 14H6a2 2 0 0 0-2 2v2h16v-2a2 2 0 0 0-.7-1.6z"/><path d="M9 14V9.5a3 3 0 1 1 6 0V14"/>',
  image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
  select:'<path d="M5 3l6.5 17 2.4-7.1L21 10.5z"/>',
+ hand:'<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
  undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
  redo:'<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
  zin:'<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/>',
@@ -4483,12 +4488,12 @@ function open(note){if(E.nid)close();reset();E.note=note;E.nid=note.id;E.order=(
   body.append(E.thumbsEl,E.scroller,E.ind);E.body=body;E.root.append(body);applyRootClass();
   E.io=new IntersectionObserver(ents=>{for(const en of ents){const pv=E.views.get(en.target.dataset.id);if(!pv)continue;pv.visible=en.isIntersecting;if(en.isIntersecting)queueRender(pv);else{if(pv.task){try{pv.task.cancel()}catch(_){}}freePage(pv)}}},{root:E.scroller,rootMargin:COARSE?'900px 0px':'1300px 0px'});
   E.tio=new IntersectionObserver(ents=>{for(const en of ents)if(en.isIntersecting)drawThumb(en.target.dataset.id)},{root:E.thumbsEl,rootMargin:'300px'});
-  E.scroller.addEventListener('scroll',onScroll,{passive:true});gestureSetup(E.scroller);E.root.classList.toggle('fingerdraw',fingerDraws());
+  E.scroller.addEventListener('scroll',onScroll,{passive:true});gestureSetup(E.scroller);handSetup(E.scroller);E.root.classList.toggle('fingerdraw',fingerDraws());
   E.scroller.addEventListener('wheel',e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();wheelZoom(e)}},{passive:false});
-  document.addEventListener('keydown',onKey);document.addEventListener('selectionchange',onSelChange);addEventListener('resize',onResize);
+  document.addEventListener('keydown',onKey);document.addEventListener('keyup',onKeyUp);addEventListener('blur',spaceOff);document.addEventListener('selectionchange',onSelChange);addEventListener('resize',onResize);
   E.pagesEl.append(h('div',{class:'empty',style:{padding:'60px'}},h('div',{class:'av-load',style:{position:'static'}},h('span',{class:'spin'}),'Opening pages…')));
   if(S.db)E.unsub=S.db.collection('notes/'+E.nid+'/pages').limit(1000).onSnapshot(onPagesSnap,err=>toast(errText(err),'err'));}
-function close(){if(!E.nid)return;try{commitEdit()}catch(e){}try{flush()}catch(e){}E.unsub&&E.unsub();E.io&&E.io.disconnect();E.tio&&E.tio.disconnect();document.removeEventListener('keydown',onKey);document.removeEventListener('selectionchange',onSelChange);removeEventListener('resize',onResize);
+function close(){if(!E.nid)return;try{commitEdit()}catch(e){}try{flush()}catch(e){}E.unsub&&E.unsub();E.io&&E.io.disconnect();E.tio&&E.tio.disconnect();document.removeEventListener('keydown',onKey);document.removeEventListener('keyup',onKeyUp);removeEventListener('blur',spaceOff);E.spaceHand=false;document.removeEventListener('selectionchange',onSelChange);removeEventListener('resize',onResize);
   hideFloat();closePop();hideFmtBar();E.nid=null;
   /* give back the memory of every drawn page right away (canvases are the biggest memory users on iPhone and iPad) */
   for(const pv of E.views.values()){try{if(pv.task)pv.task.cancel()}catch(_){}for(const c of [pv.bg,pv.ink,pv.live]){c.width=0;c.height=0}pv.rendered=false;pv.visible=false}
@@ -4526,7 +4531,7 @@ function buildTop(){
   E.root.append(top)}
 const keepFocus=e=>{if(E.editing)e.preventDefault()};/* toolbar taps must not end text editing */
 function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
-  const G=h('div',{class:'tgroup'});G.append(toolBtn('select','select','Select and highlight text','v'));
+  const G=h('div',{class:'tgroup'});G.append(toolBtn('hand','hand','Hand: drag to move the page (or hold Space)'),toolBtn('select','select','Select and highlight text','v'));
   if(!ro)G.append(toolBtn('pen','pen','Pen','p'),toolBtn('hl','hl','Highlighter','h'),toolBtn('eraser','eraser','Eraser','e'),toolBtn('lasso','lasso','Lasso','l'),toolBtn('shape','shape','Shapes','s'),
     toolBtn('text','text','Add text','t'),toolBtn('note','note','Comment'),toolBtn('sign','sign','Signature'),toolBtn('stamp','stamp','Stamp'),
     h('button',{class:'ib','aria-label':'Insert image',title:'Insert image',onclick:insertImage},ico('image')),h('span',{class:'sep',style:{margin:'0 2px'}}),toolBtn('edit','editpdf','Edit PDF text and images','x'));
@@ -4568,9 +4573,9 @@ let selTip=false,editTip=false;
 const editSub=()=>(E.tp.edit&&E.tp.edit.m)||'blocks';
 /* the tool that handles a press on the page (Edit PDF has its own sub-tools) */
 function effTool(){if(E.tool!=='edit')return E.tool;const m=editSub();return m==='text'?'text':m==='white'?'white':m==='redact'?'redact':'blocks'}
-const capOff=()=>E.tool==='select'||(E.tool==='edit'&&editSub()==='blocks');
-function applyRootClass(){if(!E.root)return;E.root.className='ed t-'+E.tool+(E.tool==='edit'?' m-'+editSub():'')+(fingerDraws()?' fingerdraw':'');for(const pv of E.views.values())pv.cap.hidden=capOff()}
-function setTool(t){if(E.readOnly&&t!=='select')return;commitEdit();if(t==='select'&&!selTip&&E.order.some(id=>E.pages.get(id)?.kind==='pdf')){selTip=true;toast('Drag across PDF text to highlight, underline, comment or ask AI. Click items to move them.')}clearSel();deselectItem();E.tool=t;setPref('tool',t);applyRootClass();renderTools();
+const capOff=()=>E.tool==='select'||E.tool==='hand'||(E.tool==='edit'&&editSub()==='blocks');
+function applyRootClass(){if(!E.root)return;E.root.className='ed t-'+E.tool+(E.tool==='edit'?' m-'+editSub():'')+(fingerDraws()?' fingerdraw':'')+(E.spaceHand?' hand-tmp':'');for(const pv of E.views.values())pv.cap.hidden=capOff()}
+function setTool(t){if(E.readOnly&&t!=='select'&&t!=='hand')return;commitEdit();if(t==='select'&&!selTip&&E.order.some(id=>E.pages.get(id)?.kind==='pdf')){selTip=true;toast('Drag across PDF text to highlight, underline, comment or ask AI. Click items to move them.')}clearSel();deselectItem();E.tool=t;setPref('tool',t);applyRootClass();renderTools();
   if(wantText())ensureTextLayers();hideFloat();refreshEditLayers();if(t==='sign'&&!E.pendingSign)signatureDialog();
   if(E.toolsEl&&E.toolsEl.scrollWidth>E.toolsEl.clientWidth+4){const pr=$('.props',E.toolsEl);if(pr&&pr.childElementCount)E.toolsEl.scrollTo({left:Math.max(0,pr.offsetLeft-E.toolsEl.clientWidth*.35),behavior:'smooth'})}
   if(t==='edit'&&!editTip){editTip=true;const hasPdf=E.order.some(id=>E.pages.get(id)?.kind==='pdf');toast(hasPdf?'Tap any text or image on a PDF page to edit it, like Acrobat. Whiteout and Redact cover areas; Add text writes anywhere.':'Edit PDF changes text and images on PDF pages. On notebook pages you can use Add text, Image, Whiteout and Redact.',null,5200)}}
@@ -4804,6 +4809,27 @@ const midOf=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2}),distO
 const penBusy=()=>(E.ptr&&E.ptr.type==='pen')||Date.now()-(E.penAt||0)<600;
 const isPalm=t=>(t.radiusX||0)>=32||(t.radiusY||0)>=32;
 let PAN=null,inert=0;
+/* Hand tool (Goodnotes / Acrobat style): drag the page with the mouse to move around.
+   Also works as a temporary hand while Space is held, and with the middle mouse button in any tool.
+   Fingers and the Pencil keep scrolling natively in Hand mode (the drawing layer is off). */
+let HAND=null;const handOn=()=>E.tool==='hand'||E.spaceHand;
+function handSetup(sc){
+  sc.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse'||HAND)return;const mid=e.button===1;if(!mid&&!(e.button===0&&handOn()))return;
+    if(!mid&&e.target.closest&&e.target.closest('button,a,input,textarea,select,.pg-tools,.add-page,.it.editing'))return;
+    e.preventDefault();e.stopPropagation();stopInertia();hideFloat();
+    HAND={id:e.pointerId,x:e.clientX,y:e.clientY,sl:sc.scrollLeft,st:sc.scrollTop,s:[[performance.now(),e.clientX,e.clientY]]};
+    try{sc.setPointerCapture(e.pointerId)}catch(_){}if(E.root)E.root.classList.add('panning')},{capture:true});
+  sc.addEventListener('pointermove',e=>{if(!HAND||e.pointerId!==HAND.id)return;e.preventDefault();e.stopPropagation();
+    sc.scrollLeft=HAND.sl-(e.clientX-HAND.x);sc.scrollTop=HAND.st-(e.clientY-HAND.y);HAND.s.push([performance.now(),e.clientX,e.clientY]);if(HAND.s.length>6)HAND.s.shift()},{capture:true});
+  const up=e=>{if(!HAND||e.pointerId!==HAND.id)return;e.stopPropagation();const s=HAND.s;HAND=null;if(E.root)E.root.classList.remove('panning');try{sc.releasePointerCapture(e.pointerId)}catch(_){}
+    /* a quick flick keeps gliding a little, then slows down */
+    const a=s[0],b=s[s.length-1],dt=b[0]-a[0];if(e.type!=='pointerup'||!(dt>0)||performance.now()-b[0]>60)return;
+    let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();if(Math.abs(vx)+Math.abs(vy)<.3)return;
+    const step=now=>{const d=now-last;last=now;const k=Math.pow(.93,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};inert=requestAnimationFrame(step)};
+  sc.addEventListener('pointerup',up,{capture:true});sc.addEventListener('pointercancel',up,{capture:true});
+  /* no browser auto-scroll / link-open on middle click */
+  sc.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});sc.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault()});
+  sc.addEventListener('click',e=>{if(handOn()&&!(e.target.closest&&e.target.closest('button,a,input,textarea,select,.pg-tools,.add-page')))e.stopPropagation()},{capture:true})}
 function stopInertia(){if(inert){cancelAnimationFrame(inert);inert=0}}
 function gestureSetup(sc){
   for(const t of ['gesturestart','gesturechange','gestureend'])sc.addEventListener(t,e=>{e.preventDefault()},{passive:false});
@@ -5230,7 +5256,10 @@ function onKey(e){if(S.route.name!=='editor')return;if(E.editing&&!(e.metaKey||e
   if(mod&&(e.key==='='||e.key==='+')){e.preventDefault();setZoom(E.zoom*1.2);return}if(mod&&e.key==='-'){e.preventDefault();setZoom(E.zoom/1.2);return}
   if(e.key==='Delete'||e.key==='Backspace'){if(E.sel){e.preventDefault();deleteSel()}else if(E.itemSel){e.preventDefault();const pv=E.views.get(E.itemSel.pid);removeItem(pv,E.itemSel.id)}return}
   if(e.key==='Escape'){commitEdit();clearSel();deselectItem();hideFloat();closePop();return}
+  if(e.key===' '&&!mod&&!e.altKey){e.preventDefault();if(!E.spaceHand){E.spaceHand=true;applyRootClass()}return}
   if(!mod&&!e.altKey&&TOOL_KEYS[e.key.toLowerCase()])setTool(TOOL_KEYS[e.key.toLowerCase()])}
+function onKeyUp(e){if(e.key===' ')spaceOff()}
+function spaceOff(){if(!E.spaceHand)return;E.spaceHand=false;applyRootClass()}
 
 /* ---------- side panels: find, comments, AI ---------- */
 function togglePanel(kind,force){if(kind==='find')setTimeout(ensureTextLayers,0);if(E.panel===kind&&!force){E.panel=null;E.panelEl&&E.panelEl.remove();E.panelEl=null}else{E.panel=kind;renderPanel()}
