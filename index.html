@@ -179,7 +179,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 .szb i{display:block;border-radius:50%;background:var(--ink)}
 .szb.on{background:var(--accent-soft)}
 .zoomv{font-family:var(--f-mono);font-size:12px;width:46px;text-align:center;color:var(--muted)}
-.ed-body{flex:1;display:flex;min-height:0;position:relative}
+.ed-body{flex:1;display:flex;min-height:0;position:relative;overflow:clip}
 .thumbs{width:150px;flex:none;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:14px}
 .thumb{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:var(--muted);font-family:var(--f-mono)}
 .thumb canvas{width:100%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);border-radius:2px;border:2px solid transparent}
@@ -4698,7 +4698,7 @@ function ensureTextLayers(){for(const pv of E.views.values()){const pg=E.pages.g
    render at lower resolution and sharpen as soon as scrolling stops */
 const RQ=new Set();let rqBusy=false;
 function queueRender(pv){RQ.add(pv);if(!rqBusy)pumpRender()}
-async function pumpRender(){rqBusy=true;try{while(RQ.size&&E.scroller){if(G&&G.scaling)break;/* resumes when the fingers lift */const mid=E.scroller.scrollTop+E.scroller.clientHeight/2;let best=null,bd=1e18;
+async function pumpRender(){rqBusy=true;try{while(RQ.size&&E.scroller){if(G&&G.scaling)break;if(TS.fast)break;/* resumes when the glide slows *//* resumes when the fingers lift */const mid=E.scroller.scrollTop+E.scroller.clientHeight/2;let best=null,bd=1e18;
     for(const pv of RQ){if(!pv.visible||(pv.rendered&&!pv.upgrade)||!pv.el.isConnected){RQ.delete(pv);continue}const d=Math.abs(pv.el.offsetTop+pv.el.offsetHeight/2-mid);if(d<bd){bd=d;best=pv}}
     if(!best)break;RQ.delete(best);if(best.upgrade&&best.rendered){best.upgrade=false;if(E.ptr&&E.ptr.pv===best){best.upgrade=true;continue}await renderPage(best,true)}else{best.upgrade=false;await renderPage(best)}}}finally{rqBusy=false}}
 function sharpenSoon(){clearTimeout(E.upT);E.upT=setTimeout(()=>{if(Date.now()<E.scrollBusyUntil){sharpenSoon();return}for(const pv of E.views.values())if(pv.visible&&pv.rendered&&pv.lowres){pv.upgrade=true;queueRender(pv)}},260)}
@@ -4858,7 +4858,7 @@ const fingersOf=list=>[...list].filter(t=>t.touchType!=='stylus');
 const midOf=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2}),distOf=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)||1;
 /* touch handling: the drawing layer never lets the browser scroll by itself (that is what made Safari cancel Pencil
    strokes), so Folio scrolls for your fingers itself, with momentum. Palms and touches right after the Pencil are ignored. */
-const penBusy=()=>(E.ptr&&E.ptr.type==='pen')||Date.now()-(E.penAt||0)<600;
+const penBusy=()=>(E.ptr&&E.ptr.type==='pen')||Date.now()-(E.penAt||0)<350;
 const isPalm=t=>(t.radiusX||0)>=32||(t.radiusY||0)>=32;
 let PAN=null,inert=0;
 /* Hand tool (Goodnotes / Acrobat style): drag the page with the mouse to move around.
@@ -4876,32 +4876,69 @@ function handSetup(sc){
   const up=e=>{if(!HAND||e.pointerId!==HAND.id)return;e.stopPropagation();const s=HAND.s,click=e.type==='pointerup'&&!HAND.mid&&HAND.m<4;HAND=null;
     if(click){const el=document.elementsFromPoint(e.clientX,e.clientY).find(x=>x.classList&&x.classList.contains('it-tape'));if(el){E.tapeSkip=Date.now();tapeElToggle(el)}}if(E.root)E.root.classList.remove('panning');try{sc.releasePointerCapture(e.pointerId)}catch(_){}
     /* a quick flick keeps gliding a little, then slows down */
-    const a=s[0],b=s[s.length-1],dt=b[0]-a[0];if(e.type!=='pointerup'||!(dt>0)||performance.now()-b[0]>60)return;
-    let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();if(Math.abs(vx)+Math.abs(vy)<.3)return;
-    const step=now=>{const d=now-last;last=now;const k=Math.pow(.93,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};inert=requestAnimationFrame(step)};
+    if(e.type!=='pointerup')return;const [fx,fy]=fingerVel(s);if(Math.abs(fx)+Math.abs(fy)<.3)return;tsFling(-fx,-fy)};
   sc.addEventListener('pointerup',up,{capture:true});sc.addEventListener('pointercancel',up,{capture:true});
   /* no browser auto-scroll / link-open on middle click */
   sc.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});sc.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault()});
   sc.addEventListener('click',e=>{if(handOn()&&!(e.target.closest&&e.target.closest('button,a,input,textarea,select,.pg-tools,.add-page,.it-tape')))e.stopPropagation()},{capture:true})}
-function stopInertia(){if(inert){cancelAnimationFrame(inert);inert=0}}
+/* ---- finger scrolling that feels like iPadOS ----
+   On the drawing layer Folio scrolls for your fingers itself (so Safari never steals Pencil strokes), so it imitates native
+   scrolling: the page follows the finger once per frame, a flick glides with iOS-style momentum (repeated flicks speed up),
+   and the ends of the document stretch like rubber and bounce back. Page rendering waits while the page is flying by fast. */
+const TS={raf:0,t:0,px:0,py:0,ox:0,oy:0,vx:0,vy:0,mx:0,my:0,fast:false,carry:null,moved:false};
+const rubber=(o,dim)=>{const a=Math.abs(o),r=(1-1/(a*.55/Math.max(1,dim)+1))*dim;return o<0?-r:r};
+function tsShow(){const sc=E.scroller;if(!sc)return;sc.scrollLeft=TS.px;sc.scrollTop=TS.py;
+  if(TS.ox||TS.oy){sc.style.transform='translate3d('+(-TS.ox).toFixed(1)+'px,'+(-TS.oy).toFixed(1)+'px,0)';TS.moved=true}else if(TS.moved){sc.style.transform='';TS.moved=false}}
+function tsBegin(){const sc=E.scroller;TS.mx=Math.max(0,sc.scrollWidth-sc.clientWidth);TS.my=Math.max(0,sc.scrollHeight-sc.clientHeight);TS.px=sc.scrollLeft;TS.py=sc.scrollTop}
+/* virtual position (may be past the ends) → real scroll + rubber-band offset */
+function tsPlace(vx,vy){const sc=E.scroller;
+  if(vx<0){TS.px=0;TS.ox=rubber(vx,sc.clientWidth)}else if(vx>TS.mx){TS.px=TS.mx;TS.ox=rubber(vx-TS.mx,sc.clientWidth)}else{TS.px=vx;TS.ox=0}
+  if(vy<0){TS.py=0;TS.oy=rubber(vy,sc.clientHeight)}else if(vy>TS.my){TS.py=TS.my;TS.oy=rubber(vy-TS.my,sc.clientHeight)}else{TS.py=vy;TS.oy=0}}
+const TS_DECEL=.998,TS_W=.018;/* iOS normal deceleration per ms; bounce spring (critically damped) */
+function tsAxis(p,o,v,max,dt){/* returns [p,o,v] after dt ms */
+  for(let k=0;k<dt;k+=4){const h=Math.min(4,dt-k);
+    if(o){const a=-TS_W*TS_W*o-2*TS_W*v;v+=a*h;o+=v*h;if(Math.abs(o)<.4&&Math.abs(v)<.02){o=0;v=0}}
+    else if(v){v*=Math.pow(TS_DECEL,h);p+=v*h;if(p<0){o=p;p=0;v=Math.max(-3,Math.min(3,v))}else if(p>max){o=p-max;p=max;v=Math.max(-3,Math.min(3,v))}if(!o&&Math.abs(v)<.012)v=0}}
+  return[p,o,v]}
+function tsTick(now){TS.raf=0;if(!E.scroller)return;const dt=Math.min(40,Math.max(1,now-TS.t));TS.t=now;
+  [TS.px,TS.ox,TS.vx]=tsAxis(TS.px,TS.ox,TS.vx,TS.mx,dt);[TS.py,TS.oy,TS.vy]=tsAxis(TS.py,TS.oy,TS.vy,TS.my,dt);tsShow();
+  const fast=Math.max(Math.abs(TS.vx),Math.abs(TS.vy))>2.2;if(TS.fast&&!fast){TS.fast=false;if(RQ.size&&!rqBusy)pumpRender()}else TS.fast=fast;
+  if(TS.vx||TS.vy||TS.ox||TS.oy)TS.raf=inert=requestAnimationFrame(tsTick);else{inert=0;TS.fast=false;if(RQ.size&&!rqBusy)pumpRender()}}
+/* start gliding with scroll velocity (px per ms) */
+function tsFling(vx,vy,overscrolled){if(!E.scroller)return;if(!overscrolled)tsBegin();const now=performance.now(),c=TS.carry;
+  if(c&&now-c.t<900){if(Math.sign(c.vx)===Math.sign(vx)&&Math.abs(vx)>.3)vx+=c.vx*.8;if(Math.sign(c.vy)===Math.sign(vy)&&Math.abs(vy)>.3)vy+=c.vy*.8}TS.carry=null;
+  const cap=8;TS.vx=Math.max(-cap,Math.min(cap,vx));TS.vy=Math.max(-cap,Math.min(cap,vy));if(Math.abs(TS.vx)<.08)TS.vx=0;if(Math.abs(TS.vy)<.08)TS.vy=0;
+  if(TS.ox&&Math.sign(TS.vx)===Math.sign(TS.ox))TS.vx=0;if(TS.oy&&Math.sign(TS.vy)===Math.sign(TS.oy))TS.vy=0;
+  if(!(TS.vx||TS.vy||TS.ox||TS.oy))return;TS.t=now;if(TS.raf)cancelAnimationFrame(TS.raf);TS.raf=inert=requestAnimationFrame(tsTick)}
+/* finger velocity from the last ~100 ms of samples [t,x,y]; 0 if the finger rested before lifting */
+function fingerVel(s){if(!s||s.length<2)return[0,0];const b=s[s.length-1];if(performance.now()-b[0]>60)return[0,0];let a=s[0];for(const q of s)if(b[0]-q[0]<=100){a=q;break}
+  const dt=b[0]-a[0];return dt>4?[(b[1]-a[1])/dt,(b[2]-a[2])/dt]:[0,0]}
+function panStart(t){const sc=E.scroller;E.zlock=null;const was=TS.raf&&Math.max(Math.abs(TS.vx),Math.abs(TS.vy))>.4;TS.carry=was?{vx:TS.vx,vy:TS.vy,t:performance.now()}:null;
+  if(TS.raf){cancelAnimationFrame(TS.raf);TS.raf=0;inert=0}if(!TS.ox&&!TS.oy)tsBegin();else{TS.mx=Math.max(0,sc.scrollWidth-sc.clientWidth);TS.my=Math.max(0,sc.scrollHeight-sc.clientHeight)}TS.vx=TS.vy=0;
+  PAN={id:t.identifier,x:t.clientX,y:t.clientY,vx0:TS.px+TS.ox,vy0:TS.py+TS.oy,cx:t.clientX,cy:t.clientY,raf:0,s:[[performance.now(),t.clientX,t.clientY]]}}
+function panFrame(){if(!PAN)return;PAN.raf=0;tsPlace(PAN.vx0-(PAN.cx-PAN.x),PAN.vy0-(PAN.cy-PAN.y));tsShow()}
+function panEnd(){const P0=PAN;PAN=null;if(!P0)return;if(P0.raf)cancelAnimationFrame(P0.raf);tsPlace(P0.vx0-(P0.cx-P0.x),P0.vy0-(P0.cy-P0.y));tsShow();
+  const [fx,fy]=fingerVel(P0.s);tsFling(-fx,-fy,true)}
+function stopInertia(){if(inert){cancelAnimationFrame(inert);inert=0}if(TS.raf){cancelAnimationFrame(TS.raf);TS.raf=0}TS.vx=TS.vy=0;if(!PAN&&(TS.ox||TS.oy)){TS.ox=TS.oy=0;tsShow()}}
 function gestureSetup(sc){
   for(const t of ['gesturestart','gesturechange','gestureend'])sc.addEventListener(t,e=>{e.preventDefault()},{passive:false});
   sc.addEventListener('touchstart',()=>{E.zlock=null},{passive:true,capture:true});sc.addEventListener('touchmove',e=>{if(e.touches.length===1&&!G)E.zlock=null},{passive:true,capture:true});
-  sc.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))E.zlock=null},{passive:true});
-  sc.addEventListener('touchstart',e=>{stopInertia();const f=fingersOf(e.touches);const fresh=e.touches.length===e.changedTouches.length;
+  sc.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))E.zlock=null;if(TS.raf)stopInertia()},{passive:true});
+  sc.addEventListener('touchstart',e=>{const f=fingersOf(e.touches);const keepTs=f.length===1&&e.touches.length===1&&TS.raf;if(!keepTs)stopInertia();else if(inert&&inert!==TS.raf){cancelAnimationFrame(inert);inert=0}const fresh=e.touches.length===e.changedTouches.length;
     if(fresh)TT={t:Date.now(),max:0,pos:new Map(),moved:false,ok:!penBusy()};
     if(TT){for(const t of e.changedTouches){if(t.touchType==='stylus'||isPalm(t)||Date.now()-TT.t>160){TT.ok=false}TT.pos.set(t.identifier,[t.clientX,t.clientY])}TT.max=Math.max(TT.max,f.length)}
-    if([...e.changedTouches].some(t=>t.touchType==='stylus')){PAN=null;return}
+    if([...e.changedTouches].some(t=>t.touchType==='stylus')){if(PAN&&PAN.raf)cancelAnimationFrame(PAN.raf);PAN=null;stopInertia();return}
     const onCap=e.target&&e.target.closest&&e.target.closest('.capture');
-    if(f.length===1&&e.touches.length===1&&onCap&&!fingerDraws()&&!penBusy()&&!isPalm(f[0])){const t=f[0];PAN={id:t.identifier,x:t.clientX,y:t.clientY,sl:sc.scrollLeft,st:sc.scrollTop,s:[[performance.now(),t.clientX,t.clientY]]};return}
-    if(f.length>=2){PAN=null}
+    if(f.length===1&&e.touches.length===1&&onCap&&!fingerDraws()&&!penBusy()&&!isPalm(f[0])){panStart(f[0]);return}
+    if(keepTs)stopInertia();
+    if(f.length>=2&&PAN){if(PAN.raf)cancelAnimationFrame(PAN.raf);PAN=null;stopInertia()}
     if(f.length>=2&&!$('.scrim')&&!penBusy()&&!f.some(isPalm)){if(E.ptr&&E.ptr.type==='touch')cancelStroke();E.tap=null;
       if(!G){const r=sc.getBoundingClientRect(),m=midOf(f[0],f[1]);settleStop();G={z0:E.zoom,d0:distOf(f[0],f[1]),r,k:1,m,scaling:false,raf:0,s:[[performance.now(),m.x,m.y]],cx:sc.scrollLeft+m.x-r.left,cy:sc.scrollTop+m.y-r.top,ox:E.pagesEl.offsetLeft,oy:E.pagesEl.offsetTop};
         E.pagesEl.style.transformOrigin=(G.cx-G.ox)+'px '+(G.cy-G.oy)+'px'}
       if(e.cancelable)e.preventDefault()}},{passive:false});
   sc.addEventListener('touchmove',e=>{if(TT)for(const t of e.changedTouches){const p=TT.pos.get(t.identifier);if(p&&Math.hypot(t.clientX-p[0],t.clientY-p[1])>14)TT.moved=true}
-    if(PAN){if(penBusy()){PAN=null;return}const t=[...e.touches].find(x=>x.identifier===PAN.id);if(t){if(e.cancelable)e.preventDefault();sc.scrollLeft=PAN.sl-(t.clientX-PAN.x);sc.scrollTop=PAN.st-(t.clientY-PAN.y);
-        PAN.s.push([performance.now(),t.clientX,t.clientY]);if(PAN.s.length>6)PAN.s.shift();if(Math.hypot(t.clientX-PAN.x,t.clientY-PAN.y)>10)E.tap=null}return}
+    if(PAN){if(penBusy()){if(PAN.raf)cancelAnimationFrame(PAN.raf);PAN=null;stopInertia();return}const t=[...e.touches].find(x=>x.identifier===PAN.id);if(t){if(e.cancelable)e.preventDefault();PAN.cx=t.clientX;PAN.cy=t.clientY;
+        PAN.s.push([performance.now(),t.clientX,t.clientY]);if(PAN.s.length>12)PAN.s.shift();if(Math.hypot(t.clientX-PAN.x,t.clientY-PAN.y)>10)E.tap=null;if(!PAN.raf)PAN.raf=requestAnimationFrame(panFrame)}return}
     if(!G)return;const f=fingersOf(e.touches);if(f.length<2)return;if(e.cancelable)e.preventDefault();
     const m=midOf(f[0],f[1]),d=distOf(f[0],f[1]);G.m=m;G.s.push([performance.now(),m.x,m.y]);if(G.s.length>6)G.s.shift();
     /* zooming starts only after the fingers clearly spread or pinch (so two-finger panning stays a pan), and then starts from where they are: no jump */
@@ -4909,18 +4946,15 @@ function gestureSetup(sc){
     if(G.scaling){const z=rubberZoom(G.z0*d/G.d0);G.k=z/G.z0}
     if(!G.raf)G.raf=requestAnimationFrame(pinchFrame)},{passive:false});
   const end=e=>{const f=fingersOf(e.touches);
-    if(PAN&&![...e.touches].some(x=>x.identifier===PAN.id)){const s=PAN.s;PAN=null;const a=s[0],b=s[s.length-1],dt=b[0]-a[0];
-      if(dt>0&&performance.now()-b[0]<80){let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();
-        const step=now=>{const d=now-last;last=now;const k=Math.pow(.95,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};
-        if(Math.abs(vx)+Math.abs(vy)>.15)inert=requestAnimationFrame(step)}}
+    if(PAN&&![...e.touches].some(x=>x.identifier===PAN.id)){if(e.type==='touchcancel'){const P0=PAN;PAN=null;if(P0.raf)cancelAnimationFrame(P0.raf);tsFling(0,0,true)}else panEnd()}
     if(G&&f.length<2){const g=G;G=null;if(g.raf){cancelAnimationFrame(g.raf);g.raf=0}E.gesturing=true;setTimeout(()=>{E.gesturing=false},120);
       if(g.scaling){const raw=g.z0*g.k,z=clamp(raw,.4,3);pinchApply(g);E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';E.pagesEl.classList.remove('pinching');
         setZoom(z,{x:g.m.x,y:g.m.y,cx:g.cx,cy:g.cy});if(Math.abs(raw/z-1)>.01)settleFrom(raw/z,g.m)}
       else{E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';E.pagesEl.classList.remove('pinching');
         /* two-finger pan keeps gliding after you lift, like one-finger scrolling */
-        const s=g.s,a=s[0],b=s[s.length-1],dt=b[0]-a[0];if(dt>0&&performance.now()-b[0]<80){let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();
-          const step=now=>{const d=now-last;last=now;const k=Math.pow(.95,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};
-          if(Math.abs(vx)+Math.abs(vy)>.15)inert=requestAnimationFrame(step)}}
+        if(!f.length){const [fx,fy]=fingerVel(g.s);tsFling(-fx,-fy)}}
+      /* one finger still down after a pinch or two-finger pan: keep scrolling with it, like iPadOS */
+      if(f.length===1&&!fingerDraws()&&!penBusy()&&!isPalm(f[0])&&!(g.scaling&&SETTLE))panStart(f[0])
       if(RQ.size&&!rqBusy)pumpRender()}
     if(TT&&e.touches.length===0){const T=TT;TT=null;if(E.tapUndo&&!E.readOnly&&T.ok&&!penBusy()&&!T.moved&&Date.now()-T.t<350){if(T.max===2){undo();toast('Undo',null,900)}else if(T.max===3){redo();toast('Redo',null,900)}}}};
   sc.addEventListener('touchend',end);sc.addEventListener('touchcancel',end)}
