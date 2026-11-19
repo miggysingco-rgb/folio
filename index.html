@@ -256,6 +256,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 .it-tape.open.sel{outline:2px solid var(--accent)}
 .ed.t-hand .it-tape,.ed.hand-tmp .it-tape,.ed.t-select .it-tape{pointer-events:auto;cursor:pointer}
 .ed.t-tape .it-tape.open .del{display:grid;pointer-events:auto}
+.laser-cv{position:absolute;left:0;top:0;pointer-events:none;z-index:15}
+.pages.pinching{will-change:transform}
 .tape-count{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;padding:0 4px}
 @media (prefers-reduced-motion:reduce){.it-tape::before{transition:none}}
 .textLayer br::selection{background:transparent}
@@ -3927,6 +3929,7 @@ const IC={
  drop:'<path d="M12 3s7 7.2 7 12a7 7 0 0 1-14 0c0-4.8 7-12 7-12z"/>',
  move:'<path d="M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
  replace:'<path d="M3 7h13l-3-3M21 17H8l3 3"/>',
+ laser:'<path d="M3 21l9.5-9.5"/><circle cx="16" cy="8" r="2.6"/><path d="M16 2.5V4M16 12v1.5M10.5 8H12M20 8h1.5M12.1 4.1l1 1M18.9 10.9l1 1M19.9 4.1l-1 1"/>',
  tape:'<circle cx="10" cy="11" r="7"/><circle cx="10" cy="11" r="2.5"/><path d="M17 11v7.5h4.5"/><path d="M19.5 16.5l2 2-2 2"/>',
  eyeoff:'<path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.1 3.9M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'
 };
@@ -4489,7 +4492,8 @@ const canvasBlob=(cv,type='image/png',q)=>new Promise(r=>cv.toBlob(r,type,q));
 const PEN_COLORS=['#16202B','#2E55E6','#D6336C','#1F8A70','#E8590C','#7048E8'];
 const HL_COLORS=['#FFD43B','#8CE99A','#74C0FC','#FFA8A8','#E599F7'];
 const PEN_SIZES=[1.6,2.6,4.2,6.5],HL_SIZES=[14,22,32],ER_SIZES=[10,22,40];
-const TOOL_KEYS={v:'select',p:'pen',h:'hl',e:'eraser',l:'lasso',s:'shape',t:'text',x:'edit',k:'tape'};
+const TOOL_KEYS={v:'select',p:'pen',h:'hl',e:'eraser',l:'lasso',s:'shape',t:'text',x:'edit',k:'tape',r:'laser'};
+const LASER_COLORS=['#FF3B30','#FF2D92','#FF9F0A','#30D158','#0A84FF','#BF5AF2'],LASER_HOLDS=[[1000,'1 s'],[2000,'2 s'],[4000,'4 s']];
 /* tape: opaque pastel colors (nothing shows through) with a light washi pattern */
 const TAPE_COLORS=['#F2C94C','#F4A6C6','#8EC9F0','#93D7A0','#BBA5F0','#B9C0CA'],TAPE_SIZES=[16,24,34,50];
 const TAPE_PATS={plain:['Plain','none','auto'],stripe:['Stripes','repeating-linear-gradient(135deg,rgba(255,255,255,.34) 0 5px,transparent 5px 11px)','auto'],
@@ -4498,7 +4502,7 @@ const COARSE=matchMedia('(pointer:coarse)').matches;
 const Ed=(()=>{
 const E={};
 function reset(){const tp=pref('toolprefs',{});Object.assign(E,{note:null,nid:null,pages:new Map(),order:[],views:new Map(),zoom:pref('zoom',1),tool:pref('tool','pen'),
-  tp:Object.assign({pen:{c:PEN_COLORS[0],w:2.6},hl:{c:HL_COLORS[0],w:22},shape:{c:PEN_COLORS[0],w:2.6,k:'rect'},eraser:{w:22,k:'stroke'},stamp:{k:'APPROVED'},edit:{m:'blocks'},tape:{c:TAPE_COLORS[0],w:24,k:'line',pat:'stripe'}},tp,
+  tp:Object.assign({pen:{c:PEN_COLORS[0],w:2.6},hl:{c:HL_COLORS[0],w:22},shape:{c:PEN_COLORS[0],w:2.6,k:'rect'},eraser:{w:22,k:'stroke'},stamp:{k:'APPROVED'},edit:{m:'blocks'},tape:{c:TAPE_COLORS[0],w:24,k:'line',pat:'stripe'},laser:{c:LASER_COLORS[0],k:'trail',hold:2000}},tp,
     {text:Object.assign({c:PEN_COLORS[0],size:24,font:'sans',bold:false,italic:false,align:'left'},tp.text||{})}),editing:null,offs:[],snapChain:Promise.resolve(),
   input:pref('input',pref('finger',true)?'auto':'pencil'),tapUndo:pref('tapUndo',true),tap:null,tapeOpen:new Set(),undo:[],redo:[],dirty:new Set(),lastSaved:new Map(),sel:null,itemSel:null,unsub:null,panel:null,current:0,pendingSign:null,io:null,showThumbs:pref('thumbs',innerWidth>900),
   root:null,scroller:null,pagesEl:null,thumbsEl:null,panelEl:null,ptr:null,firstLoad:true,readOnly:!S.canWrite||!S.db})}
@@ -4520,7 +4524,7 @@ function open(note){if(E.nid)close();reset();E.note=note;E.nid=note.id;E.order=(
   E.pagesEl.append(h('div',{class:'empty',style:{padding:'60px'}},h('div',{class:'av-load',style:{position:'static'}},h('span',{class:'spin'}),'Opening pages…')));
   if(S.db)E.unsub=S.db.collection('notes/'+E.nid+'/pages').limit(1000).onSnapshot(onPagesSnap,err=>toast(errText(err),'err'));}
 function close(){if(!E.nid)return;try{commitEdit()}catch(e){}try{flush()}catch(e){}E.unsub&&E.unsub();E.io&&E.io.disconnect();E.tio&&E.tio.disconnect();document.removeEventListener('keydown',onKey);document.removeEventListener('keyup',onKeyUp);removeEventListener('blur',spaceOff);E.spaceHand=false;document.removeEventListener('selectionchange',onSelChange);removeEventListener('resize',onResize);
-  hideFloat();closePop();hideFmtBar();E.nid=null;
+  hideFloat();closePop();hideFmtBar();laserReset();E.nid=null;
   /* give back the memory of every drawn page right away (canvases are the biggest memory users on iPhone and iPad) */
   for(const pv of E.views.values()){try{if(pv.task)pv.task.cancel()}catch(_){}for(const c of [pv.bg,pv.ink,pv.live]){c.width=0;c.height=0}pv.rendered=false;pv.visible=false}
   for(const c of bgCache.values()){c.width=0;c.height=0}bgCache.clear();RQ.clear();E.views=new Map();E.livePv=null;
@@ -4558,7 +4562,7 @@ function buildTop(){
 const keepFocus=e=>{if(E.editing)e.preventDefault()};/* toolbar taps must not end text editing */
 function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   const G=h('div',{class:'tgroup'});G.append(toolBtn('hand','hand','Hand: drag to move the page (or hold Space)'),toolBtn('select','select','Select and highlight text','v'));
-  if(!ro)G.append(toolBtn('pen','pen','Pen','p'),toolBtn('hl','hl','Highlighter','h'),toolBtn('tape','tape','Tape: cover words, then tap to peel it back','k'),toolBtn('eraser','eraser','Eraser','e'),toolBtn('lasso','lasso','Lasso','l'),toolBtn('shape','shape','Shapes','s'),
+  if(!ro)G.append(toolBtn('pen','pen','Pen','p'),toolBtn('hl','hl','Highlighter','h'),toolBtn('tape','tape','Tape: cover words, then tap to peel it back','k'),toolBtn('laser','laser','Laser pointer: writing that fades away','r'),toolBtn('eraser','eraser','Eraser','e'),toolBtn('lasso','lasso','Lasso','l'),toolBtn('shape','shape','Shapes','s'),
     toolBtn('text','text','Add text','t'),toolBtn('note','note','Comment'),toolBtn('sign','sign','Signature'),toolBtn('stamp','stamp','Stamp'),
     h('button',{class:'ib','aria-label':'Insert image',title:'Insert image',onclick:insertImage},ico('image')),h('span',{class:'sep',style:{margin:'0 2px'}}),toolBtn('edit','editpdf','Edit PDF text and images','x'));
   T.append(G,h('span',{class:'sep'}));
@@ -4569,6 +4573,9 @@ function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   if(t==='hl')for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));
   if(t==='eraser'){for(const w of ER_SIZES)R.append(sizeBtn(w,p,w/2.4));const em=p.k==='part'?'part':'stroke';
     R.append(h('div',{class:'seg'},...[['stroke','Whole stroke','Erase whole strokes'],['part','Precise','Erase only the part you rub over']].map(([k,l,tip])=>h('button',{class:'btn'+(em===k?' on':''),'aria-pressed':em===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))))}
+  if(t==='laser'){for(const c of LASER_COLORS)R.append(colorBtn(c,p));const lk=p.k==='dot'?'dot':'trail';
+    R.append(h('div',{class:'seg'},...[['trail','Trail','Write or draw: it fades away by itself'],['dot','Dot','Just a glowing pointer dot']].map(([k,l,tip])=>h('button',{class:'btn'+(lk===k?' on':''),'aria-pressed':lk===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))));
+    if(lk==='trail'){R.append(h('span',{class:'tape-count'},'Fades after'));R.append(h('div',{class:'seg'},...LASER_HOLDS.map(([ms,l])=>h('button',{class:'btn'+((p.hold||2000)===ms?' on':''),'aria-pressed':(p.hold||2000)===ms?'true':'false',title:'Writing stays while you keep going, then fades '+l+' after you stop',onclick:()=>{p.hold=ms;saveToolPrefs();renderTools()}},l))))}}
   if(t==='tape'){for(const c of TAPE_COLORS)R.append(colorBtn(c,p));const tk=p.k==='box'?'box':'line';
     R.append(h('div',{class:'seg'},...[['line','Strip','Drag along a line of words'],['box','Box','Drag a box over an area']].map(([k,l,tip])=>h('button',{class:'btn'+(tk===k?' on':''),'aria-pressed':tk===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))));
     if(tk==='line')for(const w of TAPE_SIZES)R.append(sizeBtn(w,p,w/2.8));
@@ -4607,7 +4614,7 @@ const editSub=()=>(E.tp.edit&&E.tp.edit.m)||'blocks';
 function effTool(){if(E.tool!=='edit')return E.tool;const m=editSub();return m==='text'?'text':m==='white'?'white':m==='redact'?'redact':'blocks'}
 const capOff=()=>E.tool==='select'||E.tool==='hand'||(E.tool==='edit'&&editSub()==='blocks');
 function applyRootClass(){if(!E.root)return;E.root.className='ed t-'+E.tool+(E.tool==='edit'?' m-'+editSub():'')+(fingerDraws()?' fingerdraw':'')+(E.spaceHand?' hand-tmp':'');for(const pv of E.views.values())pv.cap.hidden=capOff()}
-function setTool(t){if(E.readOnly&&t!=='select'&&t!=='hand')return;commitEdit();if(t==='select'&&!selTip&&E.order.some(id=>E.pages.get(id)?.kind==='pdf')){selTip=true;toast('Drag across PDF text to highlight, underline, comment or ask AI. Click items to move them.')}clearSel();deselectItem();E.tool=t;setPref('tool',t);applyRootClass();renderTools();
+function setTool(t){if(E.readOnly&&t!=='select'&&t!=='hand')return;commitEdit();if(t!=='laser'&&(LZ.trails.length||LZ.dot)){LZ.trails=[];LZ.dot=null;laserKick()}if(t==='select'&&!selTip&&E.order.some(id=>E.pages.get(id)?.kind==='pdf')){selTip=true;toast('Drag across PDF text to highlight, underline, comment or ask AI. Click items to move them.')}clearSel();deselectItem();E.tool=t;setPref('tool',t);applyRootClass();renderTools();
   if(wantText())ensureTextLayers();hideFloat();refreshEditLayers();if(t==='sign'&&!E.pendingSign)signatureDialog();
   if(E.toolsEl&&E.toolsEl.scrollWidth>E.toolsEl.clientWidth+4){const pr=$('.props',E.toolsEl);if(pr&&pr.childElementCount)E.toolsEl.scrollTo({left:Math.max(0,pr.offsetLeft-E.toolsEl.clientWidth*.35),behavior:'smooth'})}
   if(t==='edit'&&!editTip){editTip=true;const hasPdf=E.order.some(id=>E.pages.get(id)?.kind==='pdf');toast(hasPdf?'Tap any text or image on a PDF page to edit it, like Acrobat. Whiteout and Redact cover areas; Add text writes anywhere.':'Edit PDF changes text and images on PDF pages. On notebook pages you can use Add text, Image, Whiteout and Redact.',null,5200)}}
@@ -4691,7 +4698,7 @@ function ensureTextLayers(){for(const pv of E.views.values()){const pg=E.pages.g
    render at lower resolution and sharpen as soon as scrolling stops */
 const RQ=new Set();let rqBusy=false;
 function queueRender(pv){RQ.add(pv);if(!rqBusy)pumpRender()}
-async function pumpRender(){rqBusy=true;try{while(RQ.size&&E.scroller){const mid=E.scroller.scrollTop+E.scroller.clientHeight/2;let best=null,bd=1e18;
+async function pumpRender(){rqBusy=true;try{while(RQ.size&&E.scroller){if(G&&G.scaling)break;/* resumes when the fingers lift */const mid=E.scroller.scrollTop+E.scroller.clientHeight/2;let best=null,bd=1e18;
     for(const pv of RQ){if(!pv.visible||(pv.rendered&&!pv.upgrade)||!pv.el.isConnected){RQ.delete(pv);continue}const d=Math.abs(pv.el.offsetTop+pv.el.offsetHeight/2-mid);if(d<bd){bd=d;best=pv}}
     if(!best)break;RQ.delete(best);if(best.upgrade&&best.rendered){best.upgrade=false;if(E.ptr&&E.ptr.pv===best){best.upgrade=true;continue}await renderPage(best,true)}else{best.upgrade=false;await renderPage(best)}}}finally{rqBusy=false}}
 function sharpenSoon(){clearTimeout(E.upT);E.upT=setTimeout(()=>{if(Date.now()<E.scrollBusyUntil){sharpenSoon();return}for(const pv of E.views.values())if(pv.visible&&pv.rendered&&pv.lowres){pv.upgrade=true;queueRender(pv)}},260)}
@@ -4719,7 +4726,7 @@ async function renderTextLayer(pv,pg){pv.tlDone=true;try{const lib=await pdfjs()
   const tl=new lib.TextLayer({textContentSource:p.streamTextContent(),container:pv.tl,viewport:vp});await tl.render();pv.tl.append(h('div',{class:'endOfContent'}));markHits(pv)}catch(e){console.warn('text layer',e)}}
 function drawInk(pv,exclude){const pg=E.pages.get(pv.id);if(!pg||!pv.ink.width)return;const c=pv.ink.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pv.ink.width,pv.ink.height);
   const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under',skip:isHlMark});drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s);if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
-let scrollRaf=0;function onScroll(){if(selHlOn.size)schedSelHl();if(scrollRaf)return;scrollRaf=requestAnimationFrame(()=>{scrollRaf=0;scrollWork()})}
+let scrollRaf=0;function onScroll(){if(selHlOn.size)schedSelHl();if(LZ.trails.length||LZ.dot)laserKick();if(scrollRaf)return;scrollRaf=requestAnimationFrame(()=>{scrollRaf=0;scrollWork()})}
 function scrollWork(){if(!E.scroller||!E.nid)return;E.scrollBusyUntil=Date.now()+200;const sc=E.scroller,mid=sc.scrollTop+sc.clientHeight/2;
   if(E.offs.length!==E.order.length||E.offs.some(o=>!o))measureOffs();const O=E.offs;let lo=0,hi=O.length-1;
   while(lo<hi){const m=(lo+hi)>>1;if(O[m]&&O[m][1]<mid)lo=m+1;else hi=m}let best=lo;
@@ -4742,7 +4749,7 @@ const refreshThumbs=debounce(ids=>{for(const id of ids)drawThumb(id)},900);
 /* ---------- coordinates ---------- */
 function toL(e,pv,rect){const r=rect||pv.el.getBoundingClientRect();let lx=e.clientX-r.left,ly=e.clientY-r.top,ix,iy;
   if(pv.rot===90){ix=ly;iy=pv.vw-lx}else if(pv.rot===180){ix=pv.vw-lx;iy=pv.vh-ly}else if(pv.rot===270){ix=pv.vh-ly;iy=lx}else{ix=lx;iy=ly}return[ix/pv.s,iy/pv.s]}
-function toScreen(pv,x,y){const r=pv.el.getBoundingClientRect();const ix=x*pv.s,iy=y*pv.s;let lx,ly;
+function toScreen(pv,x,y,rect){const r=rect||pv.el.getBoundingClientRect();const ix=x*pv.s,iy=y*pv.s;let lx,ly;
   if(pv.rot===90){lx=pv.vw-iy;ly=ix}else if(pv.rot===180){lx=pv.vw-ix;ly=pv.vh-iy}else if(pv.rot===270){lx=iy;ly=pv.vh-ix}else{lx=ix;ly=iy}return[r.left+lx,r.top+ly]}
 function clientToL(pv,cx,cy){return toL({clientX:cx,clientY:cy},pv)}
 
@@ -4786,6 +4793,7 @@ function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointe
   else if(t==='shape'){E.ptr.shape={t:'shape',k:p.k,c:p.c,w:p.w,a:[x,y,x,y].map(v=>Math.round(v*10))}}
   else if(t==='white'||t==='redact'){E.ptr.box=[x,y,x,y]}
   else if(t==='tape'){E.ptr.tape=[x,y,x,y]}
+  else if(t==='laser'){E.ptr.laser=true;laserDown(pv,x,y)}
   else if(TAP_TOOLS.has(t)){E.ptr=null;tapAction(pv,x,y,e.clientX,e.clientY,t)}
   else E.ptr=null}
 /* a tap with the text, comment, stamp or signature tool */
@@ -4796,7 +4804,7 @@ function tapAction(pv,x,y,cx,cy,t){const pg=E.pages.get(pv.id);if(!pg)return;con
   else if(t==='stamp'){const k=p.k||'APPROVED';pushUndo(pv.id);(pg.items=pg.items||[]).push({id:uid(),type:'stamp',x,y,label:k==='DATE'?today().toUpperCase():k,c:STAMPS[k]||'#2B8A3E',size:28,rot:-6});renderItems(pv);markDirty(pv.id)}
   else if(t==='sign'){if(!E.pendingSign){signatureDialog();return}const sg=E.pendingSign,w=260,hh=w*(sg.h/sg.w);pushUndo(pv.id);const it={id:uid(),type:'sign',x:x-w/2,y:y-hh/2,w,h:hh,strokes:sg.strokes,lw:sg.lw||9,c:'#1C2B4A'};
     (pg.items=pg.items||[]).push(it);renderItems(pv);markDirty(pv.id);setTool('select');selectItem(pv.id,it.id)}}
-function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)hover(e,pv);return}if(P0.id!==e.pointerId)return;e.preventDefault();P0.last=Date.now();if(P0.type==='pen')E.penAt=P0.last;const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
+function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)hover(e,pv);else if(E.tool==='laser'&&e.pointerType==='mouse'&&!e.buttons&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y)}return}if(P0.id!==e.pointerId)return;e.preventDefault();P0.last=Date.now();if(P0.type==='pen')E.penAt=P0.last;const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
   const rect=pv.el.getBoundingClientRect();/* one layout read per event, not one per coalesced Pencil sample */
   for(const ev of evs.length?evs:[e]){const [x,y]=toL(ev,pv,rect);
     if(P0.st){if(P0.straight){const p=P0.st.p;p[3]=Math.round(x*10);p[4]=Math.round(y*10);clearLive(pv);liveSeg(pv,P0.st,true);continue}
@@ -4807,6 +4815,7 @@ function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)
     else if(P0.poly){P0.poly.push(x,y);drawLasso(pv,P0.poly)}
     else if(P0.moving){const dx=x-P0.lx,dy=y-P0.ly;P0.lx=x;P0.ly=y;moveSel(pv,dx,dy)}
     else if(P0.shape){P0.shape.a[2]=Math.round(x*10);P0.shape.a[3]=Math.round(y*10);clearLive(pv);const c=pv.live.getContext('2d');drawShape(c,P0.shape,pv.s*pv.dpr)}
+    else if(P0.laser){P0.lx=x;P0.ly=y;laserMove(pv,x,y)}
     else if(P0.tape){P0.tape[2]=x;P0.tape[3]=y;clearLive(pv);const g=tapeGeom(P0.tape);if(g){const c=pv.live.getContext('2d');c.save();c.globalAlpha=.85;drawTape(c,g,pv.s*pv.dpr);c.restore()}}
     else if(P0.box){P0.box[2]=x;P0.box[3]=y;clearLive(pv);const c=pv.live.getContext('2d'),s=pv.s*pv.dpr,b=normBox(P0.box);c.save();c.fillStyle=P0.t==='redact'?'rgba(0,0,0,.85)':'rgba(255,255,255,.92)';c.strokeStyle='#2E55E6';c.lineWidth=1.5*pv.dpr;c.setLineDash([5*pv.dpr,4*pv.dpr]);
       c.fillRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.strokeRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.restore()}}}
@@ -4822,6 +4831,8 @@ function up(e,pv,cancel){if(E.tap&&E.tap.id===e.pointerId){const T=E.tap;E.tap=n
   else if(P0.poly){finishLasso(pv,P0.poly)}
   else if(P0.moving){if(P0.sprite){clearLive(pv);drawInk(pv)}markDirty(pv.id);showSelFloat(pv)}
   else if(P0.box){clearLive(pv);const b=normBox(P0.box);if(!cancel&&b[2]>4&&b[3]>3)addCover(pv,P0.t,b)}
+  else if(P0.laser){const T=LZ.trails[LZ.trails.length-1];laserUp();
+    if(!cancel&&Math.hypot(P0.lx-P0.x0,P0.ly-P0.y0)*pv.s<6&&Date.now()-P0.t0<350&&peekAt(pv,P0.x0,P0.y0)&&T&&T.pts.length<=4)LZ.trails.pop()}/* a laser tap on tape peels or covers it */
   else if(P0.tape){clearLive(pv);const a=P0.tape;if(!cancel){if(Math.hypot(a[2]-a[0],a[3]-a[1])*pv.s<8)peekAt(pv,a[0],a[1]);else addTape(pv,a)}}
   else if(P0.shape&&!cancel){const a=P0.shape.a;clearLive(pv);if(Math.hypot(a[2]-a[0],a[3]-a[1])>30){pushUndo(pv.id);(pg.strokes=pg.strokes||[]).push(P0.shape);markDirty(pv.id);if(pv.ink.width)drawShape(pv.ink.getContext('2d'),P0.shape,pv.s*pv.dpr)}}
   else clearLive(pv)}
@@ -4838,9 +4849,9 @@ function inputMenu(btn){const m=E.input;openMenu(btn,[{head:'Write with'},
   {icon:'undo',label:'Two-finger tap to undo',sub:'Three-finger tap redoes.',check:E.tapUndo,fn:()=>{E.tapUndo=!E.tapUndo;setPref('tapUndo',E.tapUndo);toast(E.tapUndo?'Two-finger tap undoes':'Tap gestures off')}}],{alignRight:true,wide:true})}
 function finishPtr(P0){if(P0&&E.ptr===P0)up({pointerId:P0.id,clientX:0,clientY:0},P0.pv,false)}
 addEventListener('pointerup',e=>{if(E.ptr&&E.ptr.id===e.pointerId)up(e,E.ptr.pv,false)},true);addEventListener('pointercancel',e=>{if(E.ptr&&E.ptr.id===e.pointerId)up(e,E.ptr.pv,true)},true);
-function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;clearTimeout(P0.still);resetLiveStyle(P0.pv);try{P0.pv.cap.releasePointerCapture(P0.id)}catch(_){}
+function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;if(P0.laser)laserUp();clearTimeout(P0.still);resetLiveStyle(P0.pv);try{P0.pv.cap.releasePointerCapture(P0.id)}catch(_){}
   clearLive(P0.pv);if(P0.erased||P0.moving){swap(E.undo,E.redo);E.redo.pop();updUndo()}if(P0.moving)showSelFloat(P0.pv);drawInk(P0.pv)}
-function hover(e,pv){const t=E.tool;if(t!=='pen'&&t!=='hl'&&t!=='eraser')return;if(!pv.rendered)return;ensureLive(pv);const [x,y]=toL(e,pv);if(t==='eraser'){eraserCursor(pv,[x,y,(E.tp.eraser.w||20)/2]);return}
+function hover(e,pv){const t=E.tool;if(t==='laser'&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y);return}if(t!=='pen'&&t!=='hl'&&t!=='eraser')return;if(!pv.rendered)return;ensureLive(pv);const [x,y]=toL(e,pv);if(t==='eraser'){eraserCursor(pv,[x,y,(E.tp.eraser.w||20)/2]);return}
   const p=P(),c=pv.live.getContext('2d'),s=pv.s*pv.dpr;clearLive(pv);c.save();c.globalAlpha=t==='hl'?.35:.5;c.fillStyle=p.c;c.beginPath();c.arc(x*s,y*s,Math.max(1.5,(p.w||2)/2)*s,0,7);c.fill();c.restore()}
 let G=null,TT=null;
 const fingersOf=list=>[...list].filter(t=>t.touchType!=='stylus');
@@ -4885,24 +4896,46 @@ function gestureSetup(sc){
     if(f.length===1&&e.touches.length===1&&onCap&&!fingerDraws()&&!penBusy()&&!isPalm(f[0])){const t=f[0];PAN={id:t.identifier,x:t.clientX,y:t.clientY,sl:sc.scrollLeft,st:sc.scrollTop,s:[[performance.now(),t.clientX,t.clientY]]};return}
     if(f.length>=2){PAN=null}
     if(f.length>=2&&!$('.scrim')&&!penBusy()&&!f.some(isPalm)){if(E.ptr&&E.ptr.type==='touch')cancelStroke();E.tap=null;
-      if(!G){const r=sc.getBoundingClientRect(),m=midOf(f[0],f[1]);G={z0:E.zoom,d0:distOf(f[0],f[1]),r,k:1,m,scaling:false,cx:sc.scrollLeft+m.x-r.left,cy:sc.scrollTop+m.y-r.top,ox:E.pagesEl.offsetLeft,oy:E.pagesEl.offsetTop};
+      if(!G){const r=sc.getBoundingClientRect(),m=midOf(f[0],f[1]);settleStop();G={z0:E.zoom,d0:distOf(f[0],f[1]),r,k:1,m,scaling:false,raf:0,s:[[performance.now(),m.x,m.y]],cx:sc.scrollLeft+m.x-r.left,cy:sc.scrollTop+m.y-r.top,ox:E.pagesEl.offsetLeft,oy:E.pagesEl.offsetTop};
         E.pagesEl.style.transformOrigin=(G.cx-G.ox)+'px '+(G.cy-G.oy)+'px'}
       if(e.cancelable)e.preventDefault()}},{passive:false});
   sc.addEventListener('touchmove',e=>{if(TT)for(const t of e.changedTouches){const p=TT.pos.get(t.identifier);if(p&&Math.hypot(t.clientX-p[0],t.clientY-p[1])>14)TT.moved=true}
     if(PAN){if(penBusy()){PAN=null;return}const t=[...e.touches].find(x=>x.identifier===PAN.id);if(t){if(e.cancelable)e.preventDefault();sc.scrollLeft=PAN.sl-(t.clientX-PAN.x);sc.scrollTop=PAN.st-(t.clientY-PAN.y);
         PAN.s.push([performance.now(),t.clientX,t.clientY]);if(PAN.s.length>6)PAN.s.shift();if(Math.hypot(t.clientX-PAN.x,t.clientY-PAN.y)>10)E.tap=null}return}
     if(!G)return;const f=fingersOf(e.touches);if(f.length<2)return;if(e.cancelable)e.preventDefault();
-    const m=midOf(f[0],f[1]),d=distOf(f[0],f[1]);const z=clamp(G.z0*d/G.d0,.4,3);G.k=z/G.z0;G.m=m;
-    if(!G.scaling&&Math.abs(G.k-1)>.04)G.scaling=true;if(G.scaling)E.pagesEl.style.transform='scale('+G.k+')';sc.scrollLeft=G.cx-(m.x-G.r.left);sc.scrollTop=G.cy-(m.y-G.r.top)},{passive:false});
+    const m=midOf(f[0],f[1]),d=distOf(f[0],f[1]);G.m=m;G.s.push([performance.now(),m.x,m.y]);if(G.s.length>6)G.s.shift();
+    /* zooming starts only after the fingers clearly spread or pinch (so two-finger panning stays a pan), and then starts from where they are: no jump */
+    if(!G.scaling&&Math.abs(d/G.d0-1)>.04){G.scaling=true;G.d0=d;E.pagesEl.classList.add('pinching')}
+    if(G.scaling){const z=rubberZoom(G.z0*d/G.d0);G.k=z/G.z0}
+    if(!G.raf)G.raf=requestAnimationFrame(pinchFrame)},{passive:false});
   const end=e=>{const f=fingersOf(e.touches);
     if(PAN&&![...e.touches].some(x=>x.identifier===PAN.id)){const s=PAN.s;PAN=null;const a=s[0],b=s[s.length-1],dt=b[0]-a[0];
       if(dt>0&&performance.now()-b[0]<80){let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();
         const step=now=>{const d=now-last;last=now;const k=Math.pow(.95,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};
         if(Math.abs(vx)+Math.abs(vy)>.15)inert=requestAnimationFrame(step)}}
-    if(G&&f.length<2){const g=G;G=null;E.gesturing=true;setTimeout(()=>{E.gesturing=false},120);E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';
-      if(g.scaling)setZoom(g.z0*g.k,{x:g.m.x,y:g.m.y,cx:g.cx,cy:g.cy})}
+    if(G&&f.length<2){const g=G;G=null;if(g.raf){cancelAnimationFrame(g.raf);g.raf=0}E.gesturing=true;setTimeout(()=>{E.gesturing=false},120);
+      if(g.scaling){const raw=g.z0*g.k,z=clamp(raw,.4,3);pinchApply(g);E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';E.pagesEl.classList.remove('pinching');
+        setZoom(z,{x:g.m.x,y:g.m.y,cx:g.cx,cy:g.cy});if(Math.abs(raw/z-1)>.01)settleFrom(raw/z,g.m)}
+      else{E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';E.pagesEl.classList.remove('pinching');
+        /* two-finger pan keeps gliding after you lift, like one-finger scrolling */
+        const s=g.s,a=s[0],b=s[s.length-1],dt=b[0]-a[0];if(dt>0&&performance.now()-b[0]<80){let vx=(b[1]-a[1])/dt,vy=(b[2]-a[2])/dt,last=performance.now();
+          const step=now=>{const d=now-last;last=now;const k=Math.pow(.95,d/16);vx*=k;vy*=k;sc.scrollLeft-=vx*d;sc.scrollTop-=vy*d;inert=(Math.abs(vx)+Math.abs(vy)>.02)?requestAnimationFrame(step):0};
+          if(Math.abs(vx)+Math.abs(vy)>.15)inert=requestAnimationFrame(step)}}
+      if(RQ.size&&!rqBusy)pumpRender()}
     if(TT&&e.touches.length===0){const T=TT;TT=null;if(E.tapUndo&&!E.readOnly&&T.ok&&!penBusy()&&!T.moved&&Date.now()-T.t<350){if(T.max===2){undo();toast('Undo',null,900)}else if(T.max===3){redo();toast('Redo',null,900)}}}};
   sc.addEventListener('touchend',end);sc.addEventListener('touchcancel',end)}
+/* pinch helpers: the page picture is scaled on the GPU while your fingers move (one update per frame), pages are only laid out again
+   when you lift. Past 40% / 300% the zoom stretches with resistance and springs back. */
+function rubberZoom(z){return z>3?3*Math.pow(z/3,.35):z<.4?.4*Math.pow(z/.4,.35):z}
+function pinchApply(g){const sc=E.scroller;if(!sc||!E.pagesEl)return;if(g.scaling)E.pagesEl.style.transform='scale('+g.k+')';sc.scrollLeft=g.cx-(g.m.x-g.r.left);sc.scrollTop=g.cy-(g.m.y-g.r.top)}
+function pinchFrame(){if(!G)return;G.raf=0;pinchApply(G);if(LZ.trails.length||LZ.dot)laserKick()}
+let SETTLE=null;
+function settleStop(){if(!SETTLE)return;const s=SETTLE;SETTLE=null;cancelAnimationFrame(s.raf);if(E.pagesEl){E.pagesEl.style.transform='';E.pagesEl.style.transformOrigin='';E.pagesEl.classList.remove('pinching')}}
+/* after a pinch past the zoom limit: start at the over-stretched size and ease back to the real one around the fingers */
+function settleFrom(k0,m){const sc=E.scroller,P=E.pagesEl;if(!sc||!P)return;settleStop();const r=sc.getBoundingClientRect();
+  const ox=sc.scrollLeft+m.x-r.left-P.offsetLeft,oy=sc.scrollTop+m.y-r.top-P.offsetTop;P.style.transformOrigin=ox+'px '+oy+'px';P.classList.add('pinching');
+  const t0=performance.now(),D=220;const step=now=>{const t=Math.min(1,(now-t0)/D),e=1-Math.pow(1-t,3),k=k0+(1-k0)*e;P.style.transform=t<1?'scale('+k+')':'';if(t<1)SETTLE.raf=requestAnimationFrame(step);else settleStop()};
+  SETTLE={raf:requestAnimationFrame(step)};P.style.transform='scale('+k0+')'}
 function clearLive(pv){const c=pv.live.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pv.live.width,pv.live.height)}
 function resetLiveStyle(pv){if(pv&&pv.live){pv.live.style.opacity='';pv.live.style.mixBlendMode=''}}
 function ensureLive(pv){const L=E.livePv;if(L&&L!==pv&&!(E.ptr&&E.ptr.pv===L)&&L.live.width){L.live.width=0;L.live.height=0}E.livePv=pv;
@@ -5273,6 +5306,34 @@ function onSelChange(){pinSelection();schedSelHl();clearTimeout(selT);if(E.tool!
   const acts=[];if(!E.readOnly)acts.push({icon:'marker',label:'Highlight',fn:()=>makeMark(pv,range,text,'hl')},{icon:'under',label:'Underline',fn:()=>makeMark(pv,range,text,'ul')},{icon:'strike',label:'Strikethrough',fn:()=>makeMark(pv,range,text,'st')},{icon:'note',label:'Highlight and comment',fn:()=>{const it=makeMark(pv,range,text,'hl');if(it)markComment(pv,it,br.left,br.bottom)}},{icon:'tape',label:'Hide with tape (tap it later to check yourself)',fn:()=>tapeSelection(range)});
   acts.push({icon:'copy',label:'Copy',fn:async()=>{try{await navigator.clipboard.writeText(text);toast('Copied')}catch(e){toast('Copy is blocked here. Use Ctrl+C.')}hideFloat()}},{icon:'spark',label:'Explain with AI',fn:()=>{hideFloat();getSelection().removeAllRanges();openAI('Explain this passage in plain language, then give the one fact most likely to be tested:\n\n"'+text.slice(0,4000)+'"')}});
   showFloat(br.left+br.width/2,br.top-8,acts);if(floatEl)floatEl.dataset.kind='text'},260)}
+/* ---------- laser pointer (Goodnotes-style) ----------
+   Nothing is saved. Trail: what you write glows and stays while you keep writing, then all of it fades
+   (after 1, 2 or 4 s of no laser input). Dot: a glowing dot follows the Pencil or mouse. Drawn on one
+   screen-sized canvas over the pages; points are kept in page units, so trails stay put while you scroll or zoom. */
+const LZ={trails:[],cur:null,dot:null,raf:0,cv:null,last:0};
+function laserReset(){if(LZ.raf)cancelAnimationFrame(LZ.raf);LZ.raf=0;LZ.trails=[];LZ.cur=null;LZ.dot=null;if(LZ.cv){LZ.cv.remove();LZ.cv=null}}
+function laserKick(){if(!LZ.raf)LZ.raf=requestAnimationFrame(laserTick)}
+function laserTick(){LZ.raf=0;if(!E.nid||!E.scroller){laserReset();return}const sc=E.scroller;
+  if(!LZ.cv||!LZ.cv.isConnected){LZ.cv=h('canvas',{class:'laser-cv'});E.body.append(LZ.cv)}const cv=LZ.cv,dpr=Math.min(2,devicePixelRatio||1);
+  const W=sc.clientWidth,H=sc.clientHeight;if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);cv.style.width=W+'px';cv.style.height=H+'px'}
+  cv.style.left=sc.offsetLeft+'px';cv.style.top=sc.offsetTop+'px';const base=sc.getBoundingClientRect();const c=cv.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,cv.width,cv.height);c.setTransform(dpr,0,0,dpr,-base.left*dpr,-base.top*dpr);
+  const now=performance.now(),p=E.tp.laser||{},hold=p.hold||2000,busy=!!LZ.cur;let a=1;if(!busy){const t=now-LZ.last-hold;if(t>0)a=1-t/600}
+  if(a<=0){LZ.trails=[]}const rects=new Map();const rectOf=pv=>{let r=rects.get(pv);if(!r){r=pv.el.getBoundingClientRect();rects.set(pv,r)}return r};
+  if(LZ.trails.length&&a>0){c.save();c.globalAlpha=Math.max(0,Math.min(1,a));for(const T of LZ.trails){if(!T.pv.el.isConnected||T.pts.length<2)continue;const r=rectOf(T.pv),s=T.pv.s;
+      const pts=[];for(let i=0;i<T.pts.length;i+=2)pts.push(toScreen(T.pv,T.pts[i],T.pts[i+1],r));laserPath(c,pts,T.c,s)}c.restore()}
+  let dotOn=false;const D=LZ.dot;if(D&&D.pv.el.isConnected){const age=now-D.at,da=D.live?1:1-Math.max(0,age-250)/350;if(da>0){dotOn=true;const [x,y]=toScreen(D.pv,D.x,D.y,rectOf(D.pv));const R=Math.max(7,11*D.pv.s);
+      c.save();c.globalAlpha=da;const g=c.createRadialGradient(x,y,0,x,y,R*2.2);g.addColorStop(0,'#fff');g.addColorStop(.18,D.c);g.addColorStop(.45,laserA(D.c,.35));g.addColorStop(1,laserA(D.c,0));c.fillStyle=g;c.beginPath();c.arc(x,y,R*2.2,0,7);c.fill();c.restore()}else LZ.dot=null}
+  if(busy||(LZ.trails.length&&a>0)||dotOn)laserKick();else c.clearRect(-1e5,-1e5,2e5,2e5)}
+function laserA(hex,a){const n=parseInt(String(hex).slice(1),16);return'rgba('+(n>>16)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
+/* glow, colour, white core: three cheap passes instead of shadowBlur (fast on iPad) */
+function laserPath(c,pts,col,s){const trace=()=>{c.beginPath();c.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length-1;i++){const mx=(pts[i][0]+pts[i+1][0])/2,my=(pts[i][1]+pts[i+1][1])/2;c.quadraticCurveTo(pts[i][0],pts[i][1],mx,my)}const L=pts[pts.length-1];c.lineTo(L[0],L[1])};
+  c.lineCap=c.lineJoin='round';trace();c.strokeStyle=laserA(col,.22);c.lineWidth=Math.max(9,13*s);c.stroke();c.strokeStyle=col;c.lineWidth=Math.max(3,4.2*s);c.stroke();c.strokeStyle='rgba(255,255,255,.92)';c.lineWidth=Math.max(1.2,1.5*s);c.stroke()}
+function laserDown(pv,x,y){const p=E.tp.laser||{};LZ.last=performance.now();if(p.k!=='dot'){LZ.cur={pv,c:p.c||LASER_COLORS[0],pts:[x,y]};LZ.trails.push(LZ.cur)}LZ.dot={pv,x,y,c:p.c||LASER_COLORS[0],at:LZ.last,live:true};laserKick()}
+function laserMove(pv,x,y){LZ.last=performance.now();const T=LZ.cur;if(T&&T.pv===pv){const n=T.pts.length;if(Math.hypot(x-T.pts[n-2],y-T.pts[n-1])>=.5)T.pts.push(x,y)}if(LZ.dot){LZ.dot.pv=pv;LZ.dot.x=x;LZ.dot.y=y;LZ.dot.at=LZ.last}laserKick()}
+function laserUp(){LZ.last=performance.now();LZ.cur=null;if(LZ.dot){LZ.dot.live=false;LZ.dot.at=LZ.last}laserKick()}
+/* the dot also follows a hovering Pencil or the mouse, so you can point without touching the page */
+function laserHover(pv,x,y){const p=E.tp.laser||{};LZ.dot={pv,x,y,c:p.c||LASER_COLORS[0],at:performance.now(),live:false};laserKick()}
+
 /* ---------- tape: hide words for active recall ----------
    Tapes are page items {type:'tape', x, y, w, h, rot?, c, pat, g?}. Whether a tape is peeled back is NOT saved:
    every time a document opens, all tape is covered again, ready for the next round of recall. */
