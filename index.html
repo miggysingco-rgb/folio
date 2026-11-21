@@ -5753,12 +5753,52 @@ function APP_SHIM(seed){var P=parent,d=seed&&typeof seed==='object'?seed:{},t=nu
   if(!window.claude){var c={use:function(name){return name==='tts'?getTts():Promise.resolve(name==='sample'?sample:name==='downloads'?downloads:null)}};try{Object.defineProperty(window,'claude',{value:Object.freeze(c),configurable:true})}catch(e){window.claude=c}}
   P.postMessage({__folio:'alive'},'*')}
 
+/* v17: study apps that run their pages in a nested frame (iframe srcdoc), like My Study Academy's colleges.
+   Folio's app frame is sandboxed and every frame inside it gets its own private origin, so a nested page hits a
+   SecurityError the moment it touches localStorage or IndexedDB, and stops. This runs in the app frame and in every
+   srcdoc frame made inside it. When the app sets an iframe's srcdoc, the page gets the same shim as the app frame,
+   seeded with the app's saved data; this frame then relays that page's saves, IndexedDB writes and Claude calls
+   up to Folio, so a nested page behaves like the app itself. src = the source of APP_SHIM, APP_IDB and APP_NEST. */
+function APP_NEST(src){var W=window,P=parent,S=src,has=Object.prototype.hasOwnProperty;
+  if(!S||!S[0]||!S[1])return;
+  var nn='';try{var cs=document.currentScript;nn=(cs&&(cs.nonce||cs.getAttribute('nonce')))||''}catch(e){}
+  var waiting=[],map={},seq=1e9,seeded={};
+  function esc(j){return j.replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029')}
+  function kids(){var o=[],fs=document.getElementsByTagName('iframe');for(var i=0;i<fs.length;i++)try{if(fs[i].contentWindow)o.push(fs[i].contentWindow)}catch(e){}return o}
+  function snap(){var o={};try{var L=W.localStorage;for(var i=0,n=L.length;i<n;i++){var k=L.key(i);if(k!=null)o[k]=String(L.getItem(k))}}catch(e){}return o}
+  function pre(){var d=snap();seeded={};for(var k in d)seeded[k]=1;
+    return '<script'+(nn?' nonce="'+String(nn).replace(/"/g,'')+'"':'')+'>('+S[0]+')('+esc(JSON.stringify(d))+');('+S[1]+')();('+APP_NEST.toString()+')('+esc(JSON.stringify(S))+');<'+'/script>'}
+  function inj(s){s=String(s);var h=pre(),m=/<head(?=[\s>])[^>]*>/i.exec(s)||/<html(?=[\s>])[^>]*>/i.exec(s);
+    if(m)return s.slice(0,m.index+m[0].length)+h+s.slice(m.index+m[0].length);
+    var d=/<!doctype[^>]*>/i.exec(s);return d?s.slice(0,d.index+d[0].length)+h+s.slice(d.index+d[0].length):h+s}
+  try{var D=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'srcdoc');
+    if(D&&D.set){Object.defineProperty(HTMLIFrameElement.prototype,'srcdoc',{configurable:true,enumerable:D.enumerable,get:D.get,set:function(v){D.set.call(this,inj(v))}});
+      var sa=Element.prototype.setAttribute;
+      Element.prototype.setAttribute=function(n,v){if(this instanceof HTMLIFrameElement&&String(n).toLowerCase()==='srcdoc')return sa.call(this,n,inj(v));return sa.apply(this,arguments)}}}catch(e){}
+  function up(m){try{P.postMessage(m,'*')}catch(e){}}
+  addEventListener('message',function(e){var m=e.data;if(!m||typeof m!=='object'||typeof m.__folio!=='string')return;var t=m.__folio,i;
+    if(e.source===P){
+      if(t==='idbseed'){var w=waiting.splice(0);for(i=0;i<w.length;i++)try{w[i].postMessage(m,'*')}catch(_){}}
+      else if(t==='ttsev'){var ks=kids();for(i=0;i<ks.length;i++)try{ks[i].postMessage(m,'*')}catch(_){}}
+      else if(t==='reply'&&has.call(map,m.id)){var r=map[m.id];try{r.w.postMessage(Object.assign({},m,{id:r.id}),'*')}catch(_){}if(m.done)delete map[m.id]}
+      return}
+    var ks2=kids(),k=null;for(i=0;i<ks2.length;i++)if(ks2[i]===e.source){k=ks2[i];break}
+    if(!k)return;
+    if(t==='alive'){if(waiting.indexOf(k)<0)waiting.push(k);up({__folio:'alive'})}
+    else if(t==='idb'){up(m)}
+    else if(t==='ls'){var d=m.data;if(d&&typeof d==='object')try{var L=W.localStorage,key,del=[];
+        for(key in d)if(has.call(d,key)&&L.getItem(key)!==String(d[key])){L.setItem(key,String(d[key]));seeded[key]=1}
+        for(key in seeded)if(has.call(seeded,key)&&!has.call(d,key)){del.push(key);delete seeded[key]}
+        for(i=0;i<del.length;i++)L.removeItem(del[i])}catch(_){}}
+    else if(t==='call'){var id=++seq;map[id]={w:k,id:m.id};up({__folio:'call',id:id,cap:m.cap,args:m.args})}
+    else if(t==='abort'){for(var q in map)if(has.call(map,q)&&map[q].w===k&&map[q].id===m.id){up({__folio:'abort',id:+q});break}}})}
+
 const AV=(()=>{let A={};
   const nonce=()=>{const s=document.querySelector('script[nonce]');return s?(s.nonce||s.getAttribute('nonce')||''):''};
   function prep(html,saved){let src=String(html||'');const n=nonce();const na=n?' nonce="'+n.replace(/"/g,'')+'"':'';
     if(!/<!doctype|<html[\s>]/i.test(src.slice(0,4000)))src='<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style></head><body>'+src+'</body></html>';
     if(n)src=src.replace(/<(script|style)(?=[\s>])(?![^>]*\bnonce=)/gi,'<$1'+na);
-    const shim='<script'+na+'>('+APP_SHIM.toString()+')('+JSON.stringify(saved||{}).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029')+');('+APP_IDB.toString()+')();<'+'/script>';
+    const shim='<script'+na+'>('+APP_SHIM.toString()+')('+JSON.stringify(saved||{}).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029')+');('+APP_IDB.toString()+')();('+APP_NEST.toString()+')('+JSON.stringify([APP_SHIM.toString(),APP_IDB.toString(),APP_NEST.toString()]).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029')+');<'+'/script>';
     const m=/<head[^>]*>/i.exec(src)||/<html[^>]*>/i.exec(src);
     if(m)return src.slice(0,m.index+m[0].length)+shim+src.slice(m.index+m[0].length);
     const dt=/<!doctype[^>]*>/i.exec(src);return dt?src.slice(0,dt.index+dt[0].length)+shim+src.slice(dt.index+dt[0].length):shim+src}
