@@ -241,7 +241,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 .textLayer ::selection{background:transparent}
 .textLayer ::-moz-selection{background:transparent}
 /* clean, Adobe-style selection: Folio draws one even band per line (selHl) instead of the browser's overlapping span boxes */
-.selhl{position:absolute;left:0;top:0;width:0;height:0;z-index:1;pointer-events:none;mix-blend-mode:multiply}
+.selhl{position:absolute;left:0;top:0;width:0;height:0;z-index:4;pointer-events:none;mix-blend-mode:multiply}
 .selhl i{position:absolute;display:block;background:#A9C8FF;border-radius:2px}
 /* saved text highlights: drawn like a real highlighter (multiply), so the words under them stay black */
 .hl-layer{position:absolute;inset:0;z-index:4;pointer-events:none;mix-blend-mode:multiply}
@@ -4408,8 +4408,7 @@ function strokeWidthAt(st,pr){return st.t==='hl'?st.w:Math.max(.35,st.w*(.35+.85
 function drawStroke(ctx,st,s){
   if(st.t==='shape')return drawShape(ctx,st,s);const p=st.p;if(!p||p.length<3)return;
   ctx.save();ctx.strokeStyle=st.c;ctx.fillStyle=st.c;ctx.lineJoin='round';
-  if(st.t==='hl'){ctx.globalAlpha=.38;ctx.globalCompositeOperation='multiply';ctx.lineCap='butt';ctx.lineWidth=st.w*s;ctx.beginPath();ctx.moveTo(p[0]/10*s,p[1]/10*s);
-    for(let i=3;i<p.length;i+=3)ctx.lineTo(p[i]/10*s,p[i+1]/10*s);if(p.length===3)ctx.lineTo(p[0]/10*s+.1,p[1]/10*s);ctx.stroke();ctx.restore();return}
+  if(st.t==='hl'){ctx.globalAlpha=HL_A;ctx.globalCompositeOperation='multiply';hlShape(ctx,st,s);ctx.restore();return}
   ctx.lineCap='round';const n=p.length/3;
   if(n===1){ctx.beginPath();ctx.arc(p[0]/10*s,p[1]/10*s,strokeWidthAt(st,p[2])*s/2,0,7);ctx.fill();ctx.restore();return}
   if(n===2){ctx.lineWidth=strokeWidthAt(st,p[2])*s;ctx.beginPath();ctx.moveTo(p[0]/10*s,p[1]/10*s);ctx.lineTo(p[3]/10*s,p[4]/10*s);ctx.stroke();ctx.restore();return}
@@ -4424,7 +4423,44 @@ function drawShape(ctx,st,s){const [x1,y1,x2,y2]=st.a.map(v=>v/10*s);ctx.save();
   else if(st.k==='ellipse')ctx.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2||.5,Math.abs(y2-y1)/2||.5,0,0,Math.PI*2);
   else{ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);if(st.k==='arrow'){const a=Math.atan2(y2-y1,x2-x1),L=Math.max(10*s,st.w*s*4.5);ctx.moveTo(x2,y2);ctx.lineTo(x2-L*Math.cos(a-.45),y2-L*Math.sin(a-.45));ctx.moveTo(x2,y2);ctx.lineTo(x2-L*Math.cos(a+.45),y2-L*Math.sin(a+.45))}}
   ctx.stroke();ctx.restore()}
-function drawStrokes(ctx,strokes,s){if(!strokes)return;for(const st of strokes)if(st.t==='hl')drawStroke(ctx,st,s);for(const st of strokes)if(st.t!=='hl')drawStroke(ctx,st,s)}
+/* ---------- highlighter (Nov 24, Goodnotes-style) ----------
+   One smooth path (midpoint quadratic curves, like the pen) with flat chisel ends and round joins. The same shape is drawn
+   live, on the page, in thumbnails and in exports, so nothing jumps or changes when the Pencil lifts. */
+const HL_A=.38;
+function hlShape(ctx,st,s){const p=st.p,n=p.length/3;if(!n)return;const w=st.w*s;ctx.strokeStyle=ctx.fillStyle=st.c;ctx.lineCap='butt';ctx.lineJoin='round';ctx.lineWidth=w;
+  const X=i=>p[i*3]/10*s,Y=i=>p[i*3+1]/10*s;let a=X(0),b=Y(0),c=a,d=b;for(let i=1;i<n;i++){const x=X(i),y=Y(i);if(x<a)a=x;else if(x>c)c=x;if(y<b)b=y;else if(y>d)d=y}
+  if(c-a<w*.22&&d-b<w*.22){const k=Math.max(w*.32,1.5);ctx.beginPath();ctx.rect((a+c)/2-k/2,(b+d)/2-w/2,k,w);ctx.fill();return}/* a tap: a small chisel mark */
+  /* the flat ends face the way the stroke travels: points bunched up right at either end (a wobble as the nib lands or lifts) are skipped so they can't tilt the ends */
+  const cut=w*.3,D=(i,j)=>Math.hypot(X(i)-X(j),Y(i)-Y(j));let i0=1,i1=n-2;while(i0<n-1&&D(i0,0)<cut)i0++;while(i1>=i0&&D(i1,n-1)<cut)i1--;
+  const I=[0];for(let i=i0;i<=i1;i++)I.push(i);I.push(n-1);const m=I.length;
+  ctx.beginPath();ctx.moveTo(X(0),Y(0));
+  if(m===2)ctx.lineTo(X(n-1),Y(n-1));else{for(let j=1;j<m-1;j++){const i=I[j],k=I[j+1];ctx.quadraticCurveTo(X(i),Y(i),(X(i)+X(k))/2,(Y(i)+Y(k))/2)}ctx.lineTo(X(n-1),Y(n-1))}
+  ctx.stroke()}
+/* On screen the ink canvas sits above the page picture, so 'multiply' on it had nothing to multiply with: words under a saved
+   highlight looked murky, and the stroke changed look the moment the Pencil lifted. hlBlend multiplies against the page itself
+   (page picture + the ink below), like a real highlighter: words stay crisp and it matches the live stroke exactly.
+   All highlights of the page go in one pass per band of about 2 MP (two small scratch canvases), not one pass per stroke. */
+let hlS=null,hlM=null;
+function hlBlend(ctx,list,s,pv,clip){if(!list.length)return;const bg=pv.bg,cv=ctx.canvas;
+  if(!bg||!bg.width||!cv||!cv.width||pv.dark){for(const st of list)drawStroke(ctx,st,s);return}
+  const R=[];let X0=1e9,Y0=1e9,X1=-1e9,Y1=-1e9;
+  for(const st of list){const b=strokeBoxC(st),m=st.w/2+2,r=[Math.floor((b[0]-m)*s),Math.floor((b[1]-m)*s),Math.ceil((b[2]+m)*s),Math.ceil((b[3]+m)*s)];R.push(r);
+    if(r[0]<X0)X0=r[0];if(r[1]<Y0)Y0=r[1];if(r[2]>X1)X1=r[2];if(r[3]>Y1)Y1=r[3]}
+  X0=Math.max(X0,0);Y0=Math.max(Y0,0);X1=Math.min(X1,cv.width);Y1=Math.min(Y1,cv.height);
+  if(clip){X0=Math.max(X0,clip[0]);Y0=Math.max(Y0,clip[1]);X1=Math.min(X1,clip[0]+clip[2]);Y1=Math.min(Y1,clip[1]+clip[3])}
+  const w=X1-X0;if(w<=0||Y1<=Y0)return;const BH=Math.max(32,Math.min(Y1-Y0,Math.floor(2e6/w)));
+  if(!hlS){hlS=document.createElement('canvas');hlM=document.createElement('canvas')}
+  for(const C of [hlS,hlM])if(C.width<w||C.height<BH){C.width=Math.max(C.width,w);C.height=Math.max(C.height,BH)}
+  const S=hlS.getContext('2d'),M=hlM.getContext('2d'),k=bg.width/cv.width;
+  for(let y=Y0;y<Y1;y+=BH){const h=Math.min(BH,Y1-y);const idx=[];for(let i=0;i<R.length;i++)if(R[i][3]>y&&R[i][1]<y+h&&R[i][2]>X0&&R[i][0]<X1)idx.push(i);if(!idx.length)continue;
+    S.setTransform(1,0,0,1,0,0);S.globalAlpha=1;S.globalCompositeOperation='source-over';S.clearRect(0,0,w,h);
+    S.drawImage(bg,X0*k,y*k,w*k,h*k,0,0,w,h);S.drawImage(cv,X0,y,w,h,0,0,w,h);/* what is under the highlights */
+    S.translate(-X0,-y);S.globalCompositeOperation='multiply';S.globalAlpha=HL_A;for(const i of idx)hlShape(S,list[i],s);/* tint, stroke by stroke */
+    M.setTransform(1,0,0,1,0,0);M.globalAlpha=1;M.globalCompositeOperation='source-over';M.clearRect(0,0,w,h);M.translate(-X0,-y);for(const i of idx)hlShape(M,list[i],s);/* where the highlights are */
+    M.setTransform(1,0,0,1,0,0);M.globalCompositeOperation='source-in';M.drawImage(hlS,0,0,w,h,0,0,w,h);
+    ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';ctx.drawImage(hlM,0,0,w,h,X0,y,w,h);ctx.restore()}}
+function hlScratchFree(){if(hlS&&hlS.width*hlS.height>1e6){for(const C of [hlS,hlM]){C.width=0;C.height=0}hlS=hlM=null}}
+function drawStrokes(ctx,strokes,s,pv,clip){if(!strokes)return;if(pv)hlBlend(ctx,strokes.filter(st=>st.t==='hl'),s,pv,clip);else for(const st of strokes)if(st.t==='hl')drawStroke(ctx,st,s);for(const st of strokes)if(st.t!=='hl')drawStroke(ctx,st,s)}
 const boxCache=new WeakMap();
 function strokeBoxC(st){let b=boxCache.get(st);if(!b){b=strokeBox(st);boxCache.set(st,b)}return b}
 function strokeBox(st){if(st.t==='shape'){const [x1,y1,x2,y2]=st.a;return[Math.min(x1,x2)/10,Math.min(y1,y2)/10,Math.max(x1,x2)/10,Math.max(y1,y2)/10]}
@@ -4570,7 +4606,8 @@ function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   if(t==='pen'||t==='shape'){for(const c of PEN_COLORS)R.append(colorBtn(c,p));R.append(customColor(p))}
   if(t==='hl'){for(const c of HL_COLORS)R.append(colorBtn(c,p))}
   if(t==='pen'||t==='shape')for(const w of PEN_SIZES)R.append(sizeBtn(w,p,w*2.2));
-  if(t==='hl')for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));
+  if(t==='hl'){for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));const hk=p.k==='line'?'line':'free';
+    R.append(h('div',{class:'seg'},...[['free','Freehand','Highlight by hand: the line is smoothed as you go. Hold still at the end to straighten it'],['line','Straight','Always a straight line, snapped level to the line of text']].map(([k,l,tip])=>h('button',{class:'btn'+(hk===k?' on':''),'aria-pressed':hk===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))))}
   if(t==='eraser'){for(const w of ER_SIZES)R.append(sizeBtn(w,p,w/2.4));const em=p.k==='part'?'part':'stroke';
     R.append(h('div',{class:'seg'},...[['stroke','Whole stroke','Erase whole strokes'],['part','Precise','Erase only the part you rub over']].map(([k,l,tip])=>h('button',{class:'btn'+(em===k?' on':''),'aria-pressed':em===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))))}
   if(t==='laser'){for(const c of LASER_COLORS)R.append(colorBtn(c,p));const lk=p.k==='dot'?'dot':'trail';
@@ -4725,7 +4762,7 @@ async function renderTextLayer(pv,pg){pv.tlDone=true;try{const lib=await pdfjs()
   pv.tl.innerHTML='';pv.tl.style.setProperty('--scale-factor',vp.scale);pv.tl.style.setProperty('--total-scale-factor',vp.scale);
   const tl=new lib.TextLayer({textContentSource:p.streamTextContent(),container:pv.tl,viewport:vp});await tl.render();pv.tl.append(h('div',{class:'endOfContent'}));markHits(pv)}catch(e){console.warn('text layer',e)}}
 function drawInk(pv,exclude){const pg=E.pages.get(pv.id);if(!pg||!pv.ink.width)return;const c=pv.ink.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pv.ink.width,pv.ink.height);
-  const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under',skip:isHlMark});drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s);if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
+  const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under',skip:isHlMark});pv.dark=darkPaper(pv);drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s,pv);hlScratchFree();if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
 let scrollRaf=0;function onScroll(){if(selHlOn.size)schedSelHl();if(LZ.trails.length||LZ.dot)laserKick();if(scrollRaf)return;scrollRaf=requestAnimationFrame(()=>{scrollRaf=0;scrollWork()})}
 function scrollWork(){if(!E.scroller||!E.nid)return;E.scrollBusyUntil=Date.now()+200;const sc=E.scroller,mid=sc.scrollTop+sc.clientHeight/2;
   if(E.offs.length!==E.order.length||E.offs.some(o=>!o))measureOffs();const O=E.offs;let lo=0,hi=O.length-1;
@@ -4771,6 +4808,31 @@ async function flush(){flushSoon.cancel();const ids=[...E.dirty];if(!ids.length)
     E.lastSaved.set(pid,plan.json);try{await commitPage(nid,pid,plan)}catch(e){setSave('Not saved');return}}
   touchNote(nid);if(E.nid===nid){setSave('Saved');refreshThumbs(ids)}}
 
+/* ---------- highlighter input (see hlShape / hlBlend for drawing) ---------- */
+function darkPaper(pv){const pg=pv&&E.pages.get(pv.id);return !!pg&&pg.paper==='dark'&&pg.kind!=='pdf'&&pg.kind!=='img'}
+/* One Euro filter (Casiez et al. 2012) in screen pixels: steadies slow, shaky movement and lets fast movement through with
+   almost no lag. Only for the highlighter; the raw Pencil point is always drawn at the tip, so the ink stays under the nib. */
+const HL_OE={min:3,beta:.02,d:8};
+const oeA=(fc,dt)=>1/(1+1/(2*Math.PI*fc)/dt);
+function oeStep(F,x,y,t){if(!F.on){Object.assign(F,{on:true,t,x,y,px:x,py:y,vx:0,vy:0});return[x,y]}
+  const dt=Math.max(.004,(t-F.t)/1000);F.t=t;const ad=oeA(HL_OE.d,dt);F.vx+=ad*((x-F.px)/dt-F.vx);F.vy+=ad*((y-F.py)/dt-F.vy);F.px=x;F.py=y;
+  const a=oeA(HL_OE.min+HL_OE.beta*Math.hypot(F.vx,F.vy),dt);F.x+=a*(x-F.x);F.y+=a*(y-F.y);return[F.x,F.y]}
+/* snap a straight highlight level (or upright) when it is within 7 degrees: lines of text are level */
+function hlSnap(p){const dx=p[3]-p[0],dy=p[4]-p[1];if(!dx&&!dy)return;const a=Math.atan2(Math.abs(dy),Math.abs(dx))*180/Math.PI;if(a<7)p[4]=p[1];else if(a>83)p[3]=p[0]}
+/* live highlighter: painted whole once per frame (rAF) with the same shape the page keeps. The live canvas holds opaque ink
+   shown at 38% with multiply, so the path never darkens where it crosses itself. */
+function hlFrame(P0){if(!P0.raf)P0.raf=requestAnimationFrame(()=>{P0.raf=0;if(E.ptr===P0)hlPaint(P0)})}
+function hlPaint(P0){const pv=P0.pv,st=P0.st;if(!pv.live.width)return;const c=pv.live.getContext('2d'),s=pv.s*pv.dpr;
+  const T={t:'hl',c:st.c,w:st.w,p:!P0.straight&&P0.tail&&P0.tail.length?st.p.concat(P0.tail):st.p};
+  const b=strokeBox(T),m=st.w/2+3,r=[Math.floor((b[0]-m)*s),Math.floor((b[1]-m)*s),Math.ceil((b[2]+m)*s),Math.ceil((b[3]+m)*s)];
+  c.setTransform(1,0,0,1,0,0);const L=P0.lr;if(L)c.clearRect(L[0],L[1],L[2]-L[0],L[3]-L[1]);else c.clearRect(0,0,pv.live.width,pv.live.height);
+  P0.lr=r;c.save();hlShape(c,T,s);c.restore()}
+function hlMove(P0,pv,ev,x,y){const p=P0.st.p;P0.rx=x;P0.ry=y;
+  if(P0.straight){p[3]=Math.round(x*10);p[4]=Math.round(y*10);hlSnap(p);return}
+  const q=oeStep(P0.f,x*pv.s,y*pv.s,ev.timeStamp||performance.now()),fx=q[0]/pv.s,fy=q[1]/pv.s,n=p.length;
+  if(Math.hypot(fx-p[n-3]/10,fy-p[n-2]/10)>=Math.max(.35,1.1/pv.s))p.push(Math.round(fx*10),Math.round(fy*10),5);/* about one point per screen pixel */
+  if(Math.hypot(x-P0.sx,y-P0.sy)>2.5){clearTimeout(P0.still);P0.still=setTimeout(()=>straighten(),600);P0.sx=x;P0.sy=y}/* hold still to straighten */
+  P0.tail=[Math.round(x*10),Math.round(y*10),5]}
 /* ---------- drawing ---------- */
 const TAP_TOOLS=new Set(['text','note','stamp','sign']);
 function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointerType==='pen'&&e.button===5))return;
@@ -4786,8 +4848,10 @@ function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointe
     else return}
   e.preventDefault();try{pv.cap.setPointerCapture(e.pointerId)}catch(_){}hideFloat();closePop();const [x,y]=toL(e,pv);const pg=E.pages.get(pv.id);const t=(e.pointerType==='pen'&&(e.buttons&32))?'eraser':effTool(),p=t==='eraser'?E.tp.eraser:P();
   const pr=e.pointerType==='pen'?Math.round(clamp(e.pressure||.5,0,1)*9):5;
-  ensureLive(pv);E.ptr={id:e.pointerId,type:e.pointerType,pv,t,x0:x,y0:y,lx:x,ly:y,last:Date.now(),t0:Date.now(),pr:pr};if(t==='hl'){pv.live.style.opacity='.38';pv.live.style.mixBlendMode='multiply'}
-  if(t==='pen'||t==='hl'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st)}
+  ensureLive(pv);E.ptr={id:e.pointerId,type:e.pointerType,pv,t,x0:x,y0:y,lx:x,ly:y,last:Date.now(),t0:Date.now(),pr:pr};if(t==='hl'){pv.live.style.opacity=String(HL_A);pv.live.style.mixBlendMode=darkPaper(pv)?'':'multiply'}
+  if(t==='hl'){const P0=E.ptr;P0.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),5]};P0.f={};oeStep(P0.f,x*pv.s,y*pv.s,e.timeStamp||performance.now());P0.sx=x;P0.sy=y;P0.rx=x;P0.ry=y;P0.tail=null;
+    if(p.k==='line'){P0.straight=true;P0.st.p.push(P0.st.p[0],P0.st.p[1],5)}else P0.still=setTimeout(()=>straighten(),600);hlPaint(P0)}
+  else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st)}
   else if(t==='eraser'){E.ptr.erased=false;erase(pv,x,y)}
   else if(t==='lasso'){if(E.sel&&E.sel.pid===pv.id&&inBox(E.sel.box,x,y)){pushUndo(pv.id);pg.strokes=pg.strokes.map((st,i)=>E.sel.strokes.has(i)?clone(st):st);E.ptr.moving=true;E.ptr.sprite=selSprite(pv)}else{clearSel();E.ptr.poly=[x,y]}}
   else if(t==='shape'){E.ptr.shape={t:'shape',k:p.k,c:p.c,w:p.w,a:[x,y,x,y].map(v=>Math.round(v*10))}}
@@ -4807,7 +4871,8 @@ function tapAction(pv,x,y,cx,cy,t){const pg=E.pages.get(pv.id);if(!pg)return;con
 function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)hover(e,pv);else if(E.tool==='laser'&&e.pointerType==='mouse'&&!e.buttons&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y)}return}if(P0.id!==e.pointerId)return;e.preventDefault();P0.last=Date.now();if(P0.type==='pen')E.penAt=P0.last;const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
   const rect=pv.el.getBoundingClientRect();/* one layout read per event, not one per coalesced Pencil sample */
   for(const ev of evs.length?evs:[e]){const [x,y]=toL(ev,pv,rect);
-    if(P0.st){if(P0.straight){const p=P0.st.p;p[3]=Math.round(x*10);p[4]=Math.round(y*10);clearLive(pv);liveSeg(pv,P0.st,true);continue}
+    if(P0.st&&P0.st.t==='hl'){hlMove(P0,pv,ev,x,y)}
+    else if(P0.st){if(P0.straight){const p=P0.st.p;p[3]=Math.round(x*10);p[4]=Math.round(y*10);clearLive(pv);liveSeg(pv,P0.st,true);continue}
       const d=Math.hypot(x-P0.lx,y-P0.ly);if(d<.6)continue;if(d>2.5){clearTimeout(P0.still);P0.still=setTimeout(()=>straighten(),600)}
       let pr=5;if(ev.pointerType==='pen'){P0.pr=P0.pr*.55+clamp(ev.pressure||.5,0,1)*9*.45;pr=Math.round(P0.pr)}/* smoothed pressure: no sudden steps in line width */
       P0.st.p.push(Math.round(x*10),Math.round(y*10),pr);P0.lx=x;P0.ly=y;liveSeg(pv,P0.st)}
@@ -4818,11 +4883,16 @@ function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)
     else if(P0.laser){P0.lx=x;P0.ly=y;laserMove(pv,x,y)}
     else if(P0.tape){P0.tape[2]=x;P0.tape[3]=y;clearLive(pv);const g=tapeGeom(P0.tape);if(g){const c=pv.live.getContext('2d');c.save();c.globalAlpha=.85;drawTape(c,g,pv.s*pv.dpr);c.restore()}}
     else if(P0.box){P0.box[2]=x;P0.box[3]=y;clearLive(pv);const c=pv.live.getContext('2d'),s=pv.s*pv.dpr,b=normBox(P0.box);c.save();c.fillStyle=P0.t==='redact'?'rgba(0,0,0,.85)':'rgba(255,255,255,.92)';c.strokeStyle='#2E55E6';c.lineWidth=1.5*pv.dpr;c.setLineDash([5*pv.dpr,4*pv.dpr]);
-      c.fillRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.strokeRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.restore()}}}
+      c.fillRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.strokeRect(b[0]*s,b[1]*s,b[2]*s,b[3]*s);c.restore()}}
+  if(P0.st&&P0.st.t==='hl'){/* where the Pencil is about to be (Chrome/Edge): drawn live only, never saved, cuts the felt lag */
+    if(!P0.straight&&P0.tail&&e.getPredictedEvents){const pe=e.getPredictedEvents(),q=pe&&pe.length?pe[pe.length-1]:null;
+      if(q){const [qx,qy]=toL(q,pv,rect);if(Math.hypot(qx-P0.rx,qy-P0.ry)*pv.s<16)P0.tail.push(Math.round(qx*10),Math.round(qy*10),5)}}
+    hlFrame(P0)}}
 const normBox=b=>[Math.min(b[0],b[2]),Math.min(b[1],b[3]),Math.abs(b[2]-b[0]),Math.abs(b[3]-b[1])];
 function up(e,pv,cancel){if(E.tap&&E.tap.id===e.pointerId){const T=E.tap;E.tap=null;try{T.pv.cap.releasePointerCapture(e.pointerId)}catch(_){}
     if(!cancel&&Math.hypot(e.clientX-T.x,e.clientY-T.y)<12&&T.pv.rendered){const [x,y]=clientToL(T.pv,T.x,T.y);if(T.peek){peekAt(T.pv,x,y);return}hideFloat();closePop();tapAction(T.pv,x,y,T.x,T.y,effTool())}return}
-  const P0=E.ptr;if(!P0||P0.id!==e.pointerId)return;pv=P0.pv;E.ptr=null;clearTimeout(P0.still);const pg=E.pages.get(pv.id);if(P0.type==='pen')E.penAt=Date.now();
+  const P0=E.ptr;if(!P0||P0.id!==e.pointerId)return;pv=P0.pv;E.ptr=null;clearTimeout(P0.still);if(P0.raf){cancelAnimationFrame(P0.raf);P0.raf=0}
+  if(P0.st&&P0.st.t==='hl'&&!P0.straight&&P0.rx!=null){const p=P0.st.p,n=p.length,ex=Math.round(P0.rx*10),ey=Math.round(P0.ry*10);if(Math.hypot(ex-p[n-3],ey-p[n-2])>=2)p.push(ex,ey,5)}/* end where the nib lifted */const pg=E.pages.get(pv.id);if(P0.type==='pen')E.penAt=Date.now();
   if(cancel&&((P0.st&&P0.st.p.length>=6)||(P0.shape)))cancel=false;/* the browser cancelled the pointer: keep the stroke instead of losing it */
   resetLiveStyle(pv);
   if(P0.st&&!cancel&&isTapStroke(P0,pv)&&peekAt(pv,P0.x0,P0.y0,true)){clearLive(pv)}/* a Pencil tap on covered tape peels it back instead of leaving a dot */
@@ -4852,7 +4922,9 @@ addEventListener('pointerup',e=>{if(E.ptr&&E.ptr.id===e.pointerId)up(e,E.ptr.pv,
 function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;if(P0.laser)laserUp();clearTimeout(P0.still);resetLiveStyle(P0.pv);try{P0.pv.cap.releasePointerCapture(P0.id)}catch(_){}
   clearLive(P0.pv);if(P0.erased||P0.moving){swap(E.undo,E.redo);E.redo.pop();updUndo()}if(P0.moving)showSelFloat(P0.pv);drawInk(P0.pv)}
 function hover(e,pv){const t=E.tool;if(t==='laser'&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y);return}if(t!=='pen'&&t!=='hl'&&t!=='eraser')return;if(!pv.rendered)return;ensureLive(pv);const [x,y]=toL(e,pv);if(t==='eraser'){eraserCursor(pv,[x,y,(E.tp.eraser.w||20)/2]);return}
-  const p=P(),c=pv.live.getContext('2d'),s=pv.s*pv.dpr;clearLive(pv);c.save();c.globalAlpha=t==='hl'?.35:.5;c.fillStyle=p.c;c.beginPath();c.arc(x*s,y*s,Math.max(1.5,(p.w||2)/2)*s,0,7);c.fill();c.restore()}
+  const p=P(),c=pv.live.getContext('2d'),s=pv.s*pv.dpr;clearLive(pv);
+  if(t==='hl'){const w=(p.w||22)*s,k=Math.max(3,w*.3);c.save();c.globalAlpha=.4;c.fillStyle=p.c;c.fillRect(x*s-k/2,y*s-w/2,k,w);c.restore();return}/* the nib's flat edge: shows exactly what the highlight will cover */
+  c.save();c.globalAlpha=.5;c.fillStyle=p.c;c.beginPath();c.arc(x*s,y*s,Math.max(1.5,(p.w||2)/2)*s,0,7);c.fill();c.restore()}
 let G=null,TT=null;
 const fingersOf=list=>[...list].filter(t=>t.touchType!=='stylus');
 const midOf=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2}),distOf=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)||1;
@@ -4975,8 +5047,7 @@ function resetLiveStyle(pv){if(pv&&pv.live){pv.live.style.opacity='';pv.live.sty
 function ensureLive(pv){const L=E.livePv;if(L&&L!==pv&&!(E.ptr&&E.ptr.pv===L)&&L.live.width){L.live.width=0;L.live.height=0}E.livePv=pv;
   if(pv.bg.width&&(pv.live.width!==pv.bg.width||pv.live.height!==pv.bg.height)){pv.live.width=pv.bg.width;pv.live.height=pv.bg.height;pv.live.style.width=pv.iw+'px';pv.live.style.height=pv.ih+'px'}}
 function liveSeg(pv,st,full){const c=pv.live.getContext('2d');const s=pv.s*pv.dpr;const p=st.p;const n=p.length/3;
-  if(st.t==='hl'){if(full){clearLive(pv);c.save();c.strokeStyle=st.c;c.lineWidth=st.w*s;c.lineCap='butt';c.lineJoin='round';c.beginPath();c.moveTo(p[0]/10*s,p[1]/10*s);for(let i=3;i<p.length;i+=3)c.lineTo(p[i]/10*s,p[i+1]/10*s);c.stroke();c.restore();return}
-    if(n<2)return;const i=(n-1)*3;c.save();c.strokeStyle=st.c;c.lineWidth=st.w*s;c.lineCap='round';c.lineJoin='round';c.beginPath();c.moveTo(p[i-3]/10*s,p[i-2]/10*s);c.lineTo(p[i]/10*s,p[i+1]/10*s);c.stroke();c.restore();return}
+  if(st.t==='hl'){if(E.ptr&&E.ptr.st===st)hlPaint(E.ptr);else{clearLive(pv);c.save();hlShape(c,st,s);c.restore()}return}
   if(full){clearLive(pv);drawStroke(c,st,s);return}
   c.save();c.strokeStyle=st.c;c.fillStyle=st.c;c.lineCap='round';c.lineJoin='round';
   if(n===1){c.beginPath();c.arc(p[0]/10*s,p[1]/10*s,strokeWidthAt(st,p[2])*s/2,0,7);c.fill()}
@@ -4985,7 +5056,9 @@ function liveSeg(pv,st,full){const c=pv.live.getContext('2d');const s=pv.s*pv.dp
     c.moveTo(k===1?X(0):(X(k-1)+X(k))/2,k===1?Y(0):(Y(k-1)+Y(k))/2);c.quadraticCurveTo(X(k),Y(k),(X(k)+X(k+1))/2,(Y(k)+Y(k+1))/2);c.stroke()}c.restore()}
 function straighten(){const P0=E.ptr;if(!P0||!P0.st||P0.st.t!=='pen'&&P0.st.t!=='hl')return;const p=P0.st.p;const n=p.length/3;if(n<4)return;
   let len=0;for(let i=3;i<p.length;i+=3)len+=Math.hypot(p[i]-p[i-3],p[i+1]-p[i-2]);const chord=Math.hypot(p[p.length-3]-p[0],p[p.length-2]-p[1]);
-  if(chord<150||chord/len<.86)return;const pr=p[p.length-1];P0.st.p=[p[0],p[1],pr,p[p.length-3],p[p.length-2],pr];P0.straight=true;clearLive(P0.pv);liveSeg(P0.pv,P0.st,true)}
+  if(chord<150||chord/len<.86)return;const pr=p[p.length-1];P0.st.p=[p[0],p[1],pr,p[p.length-3],p[p.length-2],pr];P0.straight=true;
+  if(P0.st.t==='hl'){const q=P0.st.p;if(P0.rx!=null){q[3]=Math.round(P0.rx*10);q[4]=Math.round(P0.ry*10)}hlSnap(q);P0.tail=null;hlPaint(P0);return}
+  clearLive(P0.pv);liveSeg(P0.pv,P0.st,true)}
 
 /* eraser */
 function distSeg(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy;let t=l?((px-ax)*dx+(py-ay)*dy)/l:0;t=clamp(t,0,1);return Math.hypot(px-(ax+t*dx),py-(ay+t*dy))}
@@ -5008,8 +5081,8 @@ function splitStroke(st,x,y,r){const p=st.p,n=p.length/3,rr=r+(st.t==='hl'?st.w/
 /* redraw just one area of the ink layer (erasing, highlighting) instead of the whole page */
 function drawInkRegion(pv,b,pad=0){const pg=E.pages.get(pv.id);if(!pg||!pv.ink.width)return;const s=pv.s*pv.dpr,m=pad+2;const x=Math.floor((b[0]-m)*s)-1,y=Math.floor((b[1]-m)*s)-1,w=Math.ceil((b[2]-b[0]+2*m)*s)+3,hh=Math.ceil((b[3]-b[1]+2*m)*s)+3;
   const c=pv.ink.getContext('2d');c.save();c.setTransform(1,0,0,1,0,0);c.beginPath();c.rect(x,y,w,hh);c.clip();c.clearRect(x,y,w,hh);const L=b[0]-m,T=b[1]-m,R=b[2]+m,B=b[3]+m;
-  drawItems(c,pg,s,{pass:'under'});
-  drawStrokes(c,(pg.strokes||[]).filter(st=>{const q=strokeBoxC(st),sw=(st.w||2)/2+1;return !(q[2]+sw<L||q[0]-sw>R||q[3]+sw<T||q[1]-sw>B)}),s);if(E.sel&&E.sel.pid===pv.id)drawSelBox(pv,c);c.restore()}
+  drawItems(c,pg,s,{pass:'under'});pv.dark=darkPaper(pv);
+  drawStrokes(c,(pg.strokes||[]).filter(st=>{const q=strokeBoxC(st),sw=(st.w||2)/2+1;return !(q[2]+sw<L||q[0]-sw>R||q[3]+sw<T||q[1]-sw>B)}),s,pv,[x,y,w,hh]);hlScratchFree();if(E.sel&&E.sel.pid===pv.id)drawSelBox(pv,c);c.restore()}
 function eraserCursor(pv,v){clearLive(pv);if(!v)return;const c=pv.live.getContext('2d');const s=pv.s*pv.dpr;c.save();c.strokeStyle='rgba(46,85,230,.8)';c.lineWidth=1.5*pv.dpr;c.beginPath();c.arc(v[0]*s,v[1]*s,v[2]*s,0,7);c.stroke();c.restore()}
 
 /* lasso */
