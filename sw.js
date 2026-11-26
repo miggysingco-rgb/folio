@@ -1,7 +1,7 @@
 /* Folio offline: keeps the app page on the device so it opens with no internet.
    Your notes, PDFs and study apps are not here: they live in the app's own storage on each device.
    Every address is relative to this file, so the site works at any address or sub-folder. */
-const VERSION = 'folio-shell 2026-11-24 20:30 smooth-highlighter';
+const VERSION = 'folio-shell 2026-11-26 18:10 highlighter-snap';
 const BASE = new URL('./', self.location).pathname;
 const APP = BASE + 'index.html';
 const SHELL = [APP, BASE + 'manifest.json', BASE + 'icon-192.png', BASE + 'icon-512.png'];

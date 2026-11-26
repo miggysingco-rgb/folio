@@ -4606,8 +4606,9 @@ function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   if(t==='pen'||t==='shape'){for(const c of PEN_COLORS)R.append(colorBtn(c,p));R.append(customColor(p))}
   if(t==='hl'){for(const c of HL_COLORS)R.append(colorBtn(c,p))}
   if(t==='pen'||t==='shape')for(const w of PEN_SIZES)R.append(sizeBtn(w,p,w*2.2));
-  if(t==='hl'){for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));const hk=p.k==='line'?'line':'free';
-    R.append(h('div',{class:'seg'},...[['free','Freehand','Highlight by hand: the line is smoothed as you go. Hold still at the end to straighten it'],['line','Straight','Always a straight line, snapped level to the line of text']].map(([k,l,tip])=>h('button',{class:'btn'+(hk===k?' on':''),'aria-pressed':hk===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))))}
+  if(t==='hl'){for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));const hk=hlMode(p),sn=p.snap!==false;
+    R.append(h('div',{class:'seg'},...[['auto','Auto','A roughly straight stroke straightens itself when you lift, and on a PDF it snaps cleanly to the words under it. Curves and circles stay as drawn'],['free','Freehand','Left exactly as you draw it (smoothed)'],['line','Straight','Always a straight line, snapped level to the line of text']].map(([k,l,tip])=>h('button',{class:'btn'+(hk===k?' on':''),'aria-pressed':hk===k?'true':'false',title:tip,onclick:()=>{p.m=k;saveToolPrefs();renderTools()}},l))));
+    if(hk!=='free')R.append(h('button',{class:'btn'+(sn?' on':''),'aria-pressed':sn?'true':'false',title:'On a PDF, a straight highlight snaps to exactly the words it covers, one clean band per line',onclick:()=>{p.snap=!sn;saveToolPrefs();renderTools()}},'Snap to text'))}
   if(t==='eraser'){for(const w of ER_SIZES)R.append(sizeBtn(w,p,w/2.4));const em=p.k==='part'?'part':'stroke';
     R.append(h('div',{class:'seg'},...[['stroke','Whole stroke','Erase whole strokes'],['part','Precise','Erase only the part you rub over']].map(([k,l,tip])=>h('button',{class:'btn'+(em===k?' on':''),'aria-pressed':em===k?'true':'false',title:tip,onclick:()=>{p.k=k;saveToolPrefs();renderTools()}},l))))}
   if(t==='laser'){for(const c of LASER_COLORS)R.append(colorBtn(c,p));const lk=p.k==='dot'?'dot':'trail';
@@ -4809,6 +4810,53 @@ async function flush(){flushSoon.cancel();const ids=[...E.dirty];if(!ids.length)
   touchNote(nid);if(E.nid===nid){setSave('Saved');refreshThumbs(ids)}}
 
 /* ---------- highlighter input (see hlShape / hlBlend for drawing) ---------- */
+/* Modes (E.tp.hl.m): 'auto' (default, Goodnotes-like: a roughly straight stroke straightens itself on lift, and on a PDF it
+   snaps to the words under it), 'free' (left exactly as drawn), 'line' (always straight). Snap to text: E.tp.hl.snap (default on). */
+const hlMode=p=>p&&(p.m==='free'||p.m==='line')?p.m:'auto';
+/* words on a PDF page, in page units (width 1000), grouped into text lines; cached per page */
+const HLW=new Map();let hlMeas=null;
+function hlWordsKey(pg){return pg.assetId+':'+pg.pdfPage}
+function hlWordsNow(pg){const o=HLW.get(hlWordsKey(pg));if(o&&o.lines)return o.lines;if(!o)hlWordsLoad(pg);return null}
+function hlWordsLoad(pg){if(!pg||pg.kind!=='pdf'||!pg.assetId)return Promise.resolve([]);const k=hlWordsKey(pg);let o=HLW.get(k);if(o)return o.p;
+  o={};HLW.set(k,o);if(HLW.size>150)HLW.delete(HLW.keys().next().value);
+  o.p=(async()=>{const lib=await pdfjs();const doc=await loadPdf(pg.assetId);const p=await doc.getPage(pg.pdfPage);const vp=p.getViewport({scale:1});const K=1000/vp.width;const tc=await p.getTextContent();
+    if(!hlMeas)hlMeas=document.createElement('canvas').getContext('2d');const M=hlMeas;const words=[];
+    for(const item of tc.items){if(!item.str||!item.str.trim()||!item.transform)continue;const tx=lib.Util.transform(vp.transform,item.transform);const size=Math.hypot(tx[2],tx[3]);if(size<1)continue;
+      if(Math.abs(tx[1])>size*.03||Math.abs(tx[2])>size*.03)continue;/* rotated text: no snapping */
+      const st=tc.styles[item.fontName]||{},S=size*K,x=tx[4]*K,base=tx[5]*K,w=Math.abs(item.width)*K;if(w<=0)continue;
+      const asc=st.ascent>.3&&st.ascent<1.3?st.ascent:.8,desc=st.descent<0&&st.descent>-.6?-st.descent:.2;
+      M.font='100px '+(st.fontFamily||'sans-serif');const str=item.str,tot=M.measureText(str).width||str.length;const W=t=>(M.measureText(t).width||t.length)/tot*w;
+      for(const m of str.matchAll(/\S+/g)){const a=W(str.slice(0,m.index)),b=W(str.slice(0,m.index+m[0].length));words.push({x0:x+a,x1:x+b,y0:base-asc*S,y1:base+desc*S,base,size:S})}}
+    words.sort((a,b)=>a.base-b.base||a.x0-b.x0);const lines=[];
+    for(const wd of words){let L=null;for(let i=lines.length-1;i>=0&&i>=lines.length-6;i--){const l=lines[i];if(Math.abs(l.base-wd.base)<Math.min(l.size,wd.size)*.38){L=l;break}}
+      if(!L){L={base:wd.base,size:wd.size,y0:wd.y0,y1:wd.y1,words:[]};lines.push(L)}L.y0=Math.min(L.y0,wd.y0);L.y1=Math.max(L.y1,wd.y1);L.words.push(wd)}
+    for(const L of lines){L.words.sort((a,b)=>a.x0-b.x0);const out=[];for(const wd of L.words){const q=out[out.length-1];
+      if(q&&wd.x0-q.x1<Math.min(q.size,wd.size)*.12)q.x1=Math.max(q.x1,wd.x1);else out.push({x0:wd.x0,x1:wd.x1,size:wd.size})}L.words=out}/* pieces of one word split across text items join up */
+    p.cleanup();return o.lines=lines})().catch(e=>{console.warn('hl words',e);return o.lines=[]});return o.p}
+/* how line-like a stroke is: length along the path, start-to-end distance, largest sideways wander, angle from level */
+function hlGeom(p){const n=p.length/3,x0=p[0]/10,y0=p[1]/10,x1=p[(n-1)*3]/10,y1=p[(n-1)*3+1]/10;let len=0;
+  for(let i=1;i<n;i++)len+=Math.hypot(p[i*3]-p[i*3-3],p[i*3+1]-p[i*3-2])/10;const ch=Math.hypot(x1-x0,y1-y0);let dev=0;
+  if(ch>0)for(let i=0;i<n;i++){const d=Math.abs((x1-x0)*(y0-p[i*3+1]/10)-(x0-p[i*3]/10)*(y1-y0))/ch;if(d>dev)dev=d}
+  return{len,ch,dev,ang:Math.atan2(Math.abs(y1-y0),Math.abs(x1-x0))*180/Math.PI}}
+/* the words a highlight stroke went over → one clean band per text line, from the first to the last word it covered */
+function hlSnapText(lines,st){const p=st.p,n=p.length/3,pts=[];
+  for(let i=0;i<n;i++){const x=p[i*3]/10,y=p[i*3+1]/10;if(i){const a=pts[pts.length-1],d=Math.hypot(x-a[0],y-a[1]),k=Math.ceil(d);for(let j=1;j<k;j++)pts.push([a[0]+(x-a[0])*j/k,a[1]+(y-a[1])*j/k])}pts.push([x,y])}
+  const hit=new Map();
+  for(const [x,y] of pts){let best=null,bd=1e9;for(const L of lines){const h=L.y1-L.y0,t=h*.3;if(y<L.y0-t||y>L.y1+t)continue;const d=Math.abs(y-(L.y0+L.y1)/2);if(d<bd){bd=d;best=L}}
+    if(best){let r=hit.get(best);if(!r)hit.set(best,r={a:x,b:x,n:0});r.a=Math.min(r.a,x);r.b=Math.max(r.b,x);r.n++}}
+  const bands=[];for(const [L,r] of hit){if(r.n<4)continue;const ws=L.words.filter(w=>{const ov=Math.min(w.x1,r.b)-Math.max(w.x0,r.a),ww=w.x1-w.x0;return ov>=Math.min(ww*.4,ww-.01)||ov>=6});
+    if(!ws.length)continue;const h=L.y1-L.y0,px=Math.max(1,h*.1),py=h*.06;bands.push({x0:ws[0].x0-px,x1:ws[ws.length-1].x1+px,y0:L.y0-py,y1:L.y1+py})}
+  return bands.sort((a,b)=>a.y0-b.y0)}
+const hlBand=(st,b)=>{const y=Math.round((b.y0+b.y1)*5);return{t:'hl',c:st.c,w:Math.round((b.y1-b.y0)*10)/10,p:[Math.round(b.x0*10),y,5,Math.round(b.x1*10),y,5],snap:1}};
+/* on lift: what a highlight stroke becomes (a list, since one stroke over two lines of text gives two bands) */
+function hlTidy(pv,pg,st,P0){const hp=E.tp.hl||{},m=hlMode(hp);if(m==='free')return[st];
+  const g=hlGeom(st.p),straight=st.p.length===6,lineLike=straight||(g.ch>=Math.max(st.w*.5,8)&&g.ch/g.len>=.86&&g.dev<=Math.max(st.w*.75,7));if(!lineLike)return[st];
+  if(!straight){const n=st.p.length;st.p=[st.p[0],st.p[1],5,st.p[n-3],st.p[n-2],5];hlSnap(st.p)}/* auto-straighten */
+  if(hp.snap!==false&&pg&&pg.kind==='pdf'&&g.ang<=25){const lines=hlWordsNow(pg);
+    if(lines){const b=hlSnapText(lines,st);if(b.length)return b.map(q=>hlBand(st,q))}
+    else hlWordsLoad(pg).then(L=>{const b=hlSnapText(L||[],st);const i=(pg.strokes||[]).indexOf(st);if(!b.length||i<0)return;const nb=b.map(q=>hlBand(st,q));
+      pg.strokes.splice(i,1,...nb);const v=E.views.get(pv.id);if(v===pv&&pv.ink.width){let u=strokeBoxC(st);for(const q of nb){const r=strokeBoxC(q);u=[Math.min(u[0],r[0]),Math.min(u[1],r[1]),Math.max(u[2],r[2]),Math.max(u[3],r[3])]}drawInkRegion(pv,u,Math.max(st.w,...nb.map(q=>q.w))/2+2)}markDirty(pv.id)})}/* words still loading: swap the bands in when they arrive */
+  return[st]}
 function darkPaper(pv){const pg=pv&&E.pages.get(pv.id);return !!pg&&pg.paper==='dark'&&pg.kind!=='pdf'&&pg.kind!=='img'}
 /* One Euro filter (Casiez et al. 2012) in screen pixels: steadies slow, shaky movement and lets fast movement through with
    almost no lag. Only for the highlighter; the raw Pencil point is always drawn at the tip, so the ink stays under the nib. */
@@ -4850,7 +4898,7 @@ function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointe
   const pr=e.pointerType==='pen'?Math.round(clamp(e.pressure||.5,0,1)*9):5;
   ensureLive(pv);E.ptr={id:e.pointerId,type:e.pointerType,pv,t,x0:x,y0:y,lx:x,ly:y,last:Date.now(),t0:Date.now(),pr:pr};if(t==='hl'){pv.live.style.opacity=String(HL_A);pv.live.style.mixBlendMode=darkPaper(pv)?'':'multiply'}
   if(t==='hl'){const P0=E.ptr;P0.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),5]};P0.f={};oeStep(P0.f,x*pv.s,y*pv.s,e.timeStamp||performance.now());P0.sx=x;P0.sy=y;P0.rx=x;P0.ry=y;P0.tail=null;
-    if(p.k==='line'){P0.straight=true;P0.st.p.push(P0.st.p[0],P0.st.p[1],5)}else P0.still=setTimeout(()=>straighten(),600);hlPaint(P0)}
+    if(hlMode(p)==='line'){P0.straight=true;P0.st.p.push(P0.st.p[0],P0.st.p[1],5)}else P0.still=setTimeout(()=>straighten(),600);hlPaint(P0);if(p.snap!==false)hlWordsLoad(E.pages.get(pv.id))}
   else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st)}
   else if(t==='eraser'){E.ptr.erased=false;erase(pv,x,y)}
   else if(t==='lasso'){if(E.sel&&E.sel.pid===pv.id&&inBox(E.sel.box,x,y)){pushUndo(pv.id);pg.strokes=pg.strokes.map((st,i)=>E.sel.strokes.has(i)?clone(st):st);E.ptr.moving=true;E.ptr.sprite=selSprite(pv)}else{clearSel();E.ptr.poly=[x,y]}}
@@ -4896,7 +4944,8 @@ function up(e,pv,cancel){if(E.tap&&E.tap.id===e.pointerId){const T=E.tap;E.tap=n
   if(cancel&&((P0.st&&P0.st.p.length>=6)||(P0.shape)))cancel=false;/* the browser cancelled the pointer: keep the stroke instead of losing it */
   resetLiveStyle(pv);
   if(P0.st&&!cancel&&isTapStroke(P0,pv)&&peekAt(pv,P0.x0,P0.y0,true)){clearLive(pv)}/* a Pencil tap on covered tape peels it back instead of leaving a dot */
-  else if(P0.st&&!cancel){pushUndo(pv.id);(pg.strokes=pg.strokes||[]).push(P0.st);clearLive(pv);if(E.sel)drawInk(pv);else if(P0.st.t==='hl')drawInkRegion(pv,strokeBoxC(P0.st),P0.st.w/2+2);else if(pv.ink.width)drawStroke(pv.ink.getContext('2d'),P0.st,pv.s*pv.dpr);markDirty(pv.id)}
+  else if(P0.st&&!cancel){pushUndo(pv.id);const L=P0.st.t==='hl'?hlTidy(pv,pg,P0.st,P0):[P0.st];(pg.strokes=pg.strokes||[]).push(...L);clearLive(pv);if(E.sel)drawInk(pv);
+    else if(P0.st.t==='hl'){let u=null,w=0;for(const q of L){const r=strokeBoxC(q);w=Math.max(w,q.w);u=u?[Math.min(u[0],r[0]),Math.min(u[1],r[1]),Math.max(u[2],r[2]),Math.max(u[3],r[3])]:r.slice()}drawInkRegion(pv,u,w/2+2)}else if(pv.ink.width)drawStroke(pv.ink.getContext('2d'),P0.st,pv.s*pv.dpr);markDirty(pv.id)}
   else if(P0.t==='eraser'){if(P0.erased)markDirty(pv.id);eraserCursor(pv,null)}
   else if(P0.poly){finishLasso(pv,P0.poly)}
   else if(P0.moving){if(P0.sprite){clearLive(pv);drawInk(pv)}markDirty(pv.id);showSelFloat(pv)}
@@ -4923,7 +4972,7 @@ function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;if(P0.laser)lase
   clearLive(P0.pv);if(P0.erased||P0.moving){swap(E.undo,E.redo);E.redo.pop();updUndo()}if(P0.moving)showSelFloat(P0.pv);drawInk(P0.pv)}
 function hover(e,pv){const t=E.tool;if(t==='laser'&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y);return}if(t!=='pen'&&t!=='hl'&&t!=='eraser')return;if(!pv.rendered)return;ensureLive(pv);const [x,y]=toL(e,pv);if(t==='eraser'){eraserCursor(pv,[x,y,(E.tp.eraser.w||20)/2]);return}
   const p=P(),c=pv.live.getContext('2d'),s=pv.s*pv.dpr;clearLive(pv);
-  if(t==='hl'){const w=(p.w||22)*s,k=Math.max(3,w*.3);c.save();c.globalAlpha=.4;c.fillStyle=p.c;c.fillRect(x*s-k/2,y*s-w/2,k,w);c.restore();return}/* the nib's flat edge: shows exactly what the highlight will cover */
+  if(t==='hl'){if(p.snap!==false){const pg=E.pages.get(pv.id);if(pg&&pg.kind==='pdf')hlWordsLoad(pg)}const w=(p.w||22)*s,k=Math.max(3,w*.3);c.save();c.globalAlpha=.4;c.fillStyle=p.c;c.fillRect(x*s-k/2,y*s-w/2,k,w);c.restore();return}/* the nib's flat edge: shows exactly what the highlight will cover */
   c.save();c.globalAlpha=.5;c.fillStyle=p.c;c.beginPath();c.arc(x*s,y*s,Math.max(1.5,(p.w||2)/2)*s,0,7);c.fill();c.restore()}
 let G=null,TT=null;
 const fingersOf=list=>[...list].filter(t=>t.touchType!=='stylus');
