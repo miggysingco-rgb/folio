@@ -246,6 +246,38 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 /* saved text highlights: drawn like a real highlighter (multiply), so the words under them stay black */
 .hl-layer{position:absolute;inset:0;z-index:4;pointer-events:none;mix-blend-mode:multiply}
 .hl-layer .it-mark i{border-radius:1.5px}
+/* ---------- iPad / tablet layout (Nov 27): row 1 title + actions, row 2 tools, row 3 the tool's options, all centered ---------- */
+@media (max-width:1439px){
+  .tools{flex-wrap:wrap;justify-content:center;overflow:visible;row-gap:6px;padding:2px 0 0}
+  .tools>.sep{display:none}
+  .props{flex-wrap:wrap;justify-content:center;max-width:100%;row-gap:4px;padding:3px 8px;border-radius:12px;background:var(--surface2);border:1px solid var(--line)}
+  .props:empty{display:none}
+}
+.props .seg{margin-left:4px}
+.props>.btn{height:32px;font-size:13px;padding:0 10px;margin-left:4px}
+.zoomv{cursor:pointer;border-radius:8px}
+.zoomv:hover{background:var(--surface2);color:var(--ink)}
+@media (pointer:coarse){
+  .ed-right button[aria-label="Zoom out"],.ed-right button[aria-label="Zoom in"]{display:none}
+  .zoomv{width:auto;min-width:46px;height:32px;line-height:30px;padding:0 8px;border:1px solid var(--line)}
+}
+body:has(.ed) .fo-pill{display:none}
+.scroller.pinch-lock{overflow:hidden!important}
+#fo-upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:200;height:40px;padding:0 18px;border-radius:999px;border:0;background:var(--accent,#2E55E6);color:#fff;font:600 14px var(--f-body,system-ui,sans-serif);box-shadow:0 10px 30px -8px rgba(0,0,0,.45);cursor:pointer}
+.cl-body{gap:14px}
+.cl-note{margin:0;font-size:13px;color:var(--muted);line-height:1.45}
+.cl-lbl{font:600 11px var(--f-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.cl-quick{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cl-quick a{display:flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:6px 8px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:13px;color:var(--ink);text-decoration:none;text-align:center;-webkit-tap-highlight-color:transparent}
+.cl-quick a:hover,.cl-quick a:active{border-color:var(--accent);color:var(--accent)}
+.cl-body textarea{display:block;width:100%;min-height:96px;border:1px solid var(--line2);border-radius:12px;padding:10px 12px;background:var(--surface);font:inherit;font-size:14px;line-height:1.5;color:var(--ink);resize:vertical;outline:none}
+.cl-body textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.cl-go{display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border-radius:12px;background:var(--accent);color:var(--accent-ink,#fff);font-weight:700;font-size:15px;text-decoration:none;-webkit-tap-highlight-color:transparent}
+.cl-go svg{width:18px;height:18px}
+.cl-go.wait{opacity:.6}
+.cl-status{font-size:12.5px;color:var(--muted);line-height:1.45;min-height:1em}
+.cl-status b{color:var(--ink)}
+
 /* ---------- comments (Nov 26): pins you tap to read, one card to read and edit, a tidy panel ---------- */
 .cpin{position:absolute;width:26px;height:26px;margin:0;padding:0;border:0;border-radius:13px 13px 13px 3px;background:var(--cc,#FFD43B);color:rgba(0,0,0,.62);display:grid;place-items:center;box-shadow:0 1px 2px rgba(0,0,0,.18),0 3px 10px -2px rgba(0,0,0,.28);pointer-events:auto!important;cursor:pointer;touch-action:none;transition:transform .14s ease,box-shadow .14s ease;-webkit-tap-highlight-color:transparent;transform:none}
 .cpin::after{content:'';position:absolute;inset:-9px;border-radius:50%}
@@ -3883,6 +3915,14 @@ var FOUI = (function () {
   /* ---------- installable copy: keep the page itself available offline ---------- */
   if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('offline cache', e); }); });
+    /* the saved copy opens instantly; when a newer Folio has been downloaded in the background, offer it */
+    window.FOLIO_BUILD = 'folio-shell 2026-11-27 01:30 ipad-claude';
+    navigator.serviceWorker.addEventListener('message', function (e) {
+      var d = e.data || {}; if (d.type !== 'folio-update' || (d.version && d.version === window.FOLIO_BUILD) || document.getElementById('fo-upd')) return;
+      var b = document.createElement('button'); b.id = 'fo-upd'; b.type = 'button'; b.textContent = 'New version of Folio ready \u00b7 Tap to reload';
+      b.onclick = function () { b.disabled = true; b.textContent = 'Reloading\u2026'; setTimeout(function () { location.reload(); }, 600); };
+      document.body.appendChild(b);
+    });
   }
 })();
 </script>
@@ -4639,13 +4679,13 @@ function buildTop(){
   E.saveEl=h('span',{class:'save-st'},'');
   top.append(h('div',{class:'ed-title'},h('button',{class:'ib','aria-label':'Back to library',onclick:()=>{forgetOpen();flush();goLibrary()}},ico('back')),title,E.saveEl));
   E.quickEl=h('div',{class:'quick'});E.toolsEl=h('div',{class:'tools',role:'toolbar','aria-label':'Tools'});top.append(E.toolsEl);renderTools();
-  E.zoomEl=h('span',{class:'zoomv'},Math.round(E.zoom*100)+'%');
+  E.zoomEl=h('span',{class:'zoomv',role:'button',title:'Back to 100%','aria-label':'Zoom level. Tap to go back to 100%',onclick:()=>setZoom(1)},Math.round(E.zoom*100)+'%');
   top.append(h('div',{class:'ed-right'},E.quickEl,
     h('button',{class:'ib','aria-label':'Zoom out',onclick:()=>setZoom(E.zoom/1.2)},ico('zout')),E.zoomEl,h('button',{class:'ib','aria-label':'Zoom in',onclick:()=>setZoom(E.zoom*1.2)},ico('zin')),
     h('button',{class:'ib'+(E.showThumbs?' on':''),id:'b-thumbs','aria-label':'Page thumbnails',onclick:e=>{E.showThumbs=!E.showThumbs;setPref('thumbs',E.showThumbs);E.thumbsEl.hidden=!E.showThumbs;e.currentTarget.classList.toggle('on',E.showThumbs);if(E.showThumbs)buildThumbs();onResize()}},ico('pages')),
     h('button',{class:'ib',id:'b-find','aria-label':'Find in document',onclick:()=>togglePanel('find')},ico('search')),
     h('button',{class:'ib',id:'b-comments','aria-label':'Comments',onclick:()=>togglePanel('comments')},ico('note')),
-    h('button',{class:'ib',id:'b-ai','aria-label':'Ask AI about this document',onclick:()=>togglePanel('ai')},ico('spark')),
+    h('button',{class:'ib',id:'b-ai','aria-label':S.sample?'Ask AI about this document':'Ask Claude about this page',title:S.sample?'Ask AI':'Ask Claude',onclick:()=>togglePanel('ai')},ico('spark')),
     h('button',{class:'ib','aria-label':'More',onclick:e=>moreMenu(e.currentTarget)},ico('more'))));
   E.root.append(top)}
 const keepFocus=e=>{if(E.editing)e.preventDefault()};/* toolbar taps must not end text editing */
@@ -4772,7 +4812,7 @@ function setZoom(z,at){const sc=E.scroller;if(!sc)return;const nz=clamp(Math.rou
   const cx=at&&at.cx!=null?at.cx:sc.scrollLeft+ax,cy=at&&at.cy!=null?at.cy:sc.scrollTop+ay;const A=pageAnchor(cx,cy);
   E.zoom=nz;setPref('zoom',E.zoom);if(E.zoomEl)E.zoomEl.textContent=Math.round(E.zoom*100)+'%';layoutAll();
   if(A){const pv=E.views.get(A.id);if(pv){const el=pv.el;const L=Math.max(0,el.offsetLeft+A.fx*el.offsetWidth-ax),T=Math.max(0,el.offsetTop+A.fy*el.offsetHeight-ay);sc.scrollLeft=L;sc.scrollTop=T;
-    E.zlock={L:sc.scrollLeft,T:sc.scrollTop,until:performance.now()+450};lockFrame()}}
+    E.zlock={L:sc.scrollLeft,T:sc.scrollTop,until:performance.now()+700};lockFrame()}}
   onScroll()}
 function lockFrame(){const z=E.zlock;if(!z||!E.scroller)return;if(performance.now()>z.until){E.zlock=null;return}const sc=E.scroller;
   if(Math.abs(sc.scrollTop-z.T)>2)sc.scrollTop=z.T;if(Math.abs(sc.scrollLeft-z.L)>2)sc.scrollLeft=z.L;requestAnimationFrame(lockFrame)}
@@ -4827,7 +4867,7 @@ function scrollWork(){if(!E.scroller||!E.nid)return;E.scrollBusyUntil=Date.now()
   if(E.offs.length!==E.order.length||E.offs.some(o=>!o))measureOffs();const O=E.offs;let lo=0,hi=O.length-1;
   while(lo<hi){const m=(lo+hi)>>1;if(O[m]&&O[m][1]<mid)lo=m+1;else hi=m}let best=lo;
   if(best>0&&O[best]&&O[best-1]&&Math.abs((O[best-1][0]+O[best-1][1])/2-mid)<Math.abs((O[best][0]+O[best][1])/2-mid))best--;
-  if(best!==E.current||!E.ind.textContent){E.current=best;E.ind.textContent='Page '+(best+1)+' of '+E.order.length;$$('.thumb',E.thumbsEl).forEach((t,i)=>t.classList.toggle('on',i===best))}
+  if(best!==E.current||!E.ind.textContent){if(best!==E.current&&E.panel==='ai'&&!S.sample&&CL.scope==='page')setTimeout(clRefresh,0);E.current=best;E.ind.textContent='Page '+(best+1)+' of '+E.order.length;$$('.thumb',E.thumbsEl).forEach((t,i)=>t.classList.toggle('on',i===best))}
   E.ind.classList.remove('idle');clearTimeout(E.indT);E.indT=setTimeout(()=>E.ind&&E.ind.classList.add('idle'),1400);if(floatEl&&floatEl.dataset.kind!=='keep')hideFloat()}
 function scrollToPage(i,flash){const pv=E.views.get(E.order[i]);if(!pv)return;E.scroller.scrollTo({top:pv.el.offsetTop-20,behavior:'smooth'});if(flash){pv.el.classList.remove('flash');void pv.el.offsetWidth;pv.el.classList.add('flash')}}
 function buildThumbs(){if(!E.thumbsEl||E.thumbsEl.hidden)return;E.thumbsEl.innerHTML='';E.order.forEach((id,i)=>{const pg=E.pages.get(id);if(!pg)return;const a=pg.aspect||PAGE_ASPECT,r=(pg.rot||0)%180;
@@ -5134,7 +5174,7 @@ function gestureSetup(sc){
     if(keepTs)stopInertia();
     if(f.length>=2&&PAN){if(PAN.raf)cancelAnimationFrame(PAN.raf);PAN=null;stopInertia()}
     if(f.length>=2&&!$('.scrim')&&!penBusy()&&!f.some(isPalm)){if(E.ptr&&E.ptr.type==='touch')cancelStroke();E.tap=null;
-      if(!G){const r=sc.getBoundingClientRect(),m=midOf(f[0],f[1]);settleStop();G={z0:E.zoom,d0:distOf(f[0],f[1]),r,k:1,m,scaling:false,raf:0,s:[[performance.now(),m.x,m.y]],cx:sc.scrollLeft+m.x-r.left,cy:sc.scrollTop+m.y-r.top,ox:E.pagesEl.offsetLeft,oy:E.pagesEl.offsetTop};
+      if(!G){const r=sc.getBoundingClientRect(),m=midOf(f[0],f[1]);settleStop();sc.classList.add('pinch-lock');/* iPad: stops Safari's own pan/momentum so it can't fight the zoom and slide pages away */G={z0:E.zoom,d0:distOf(f[0],f[1]),r,k:1,m,scaling:false,raf:0,s:[[performance.now(),m.x,m.y]],cx:sc.scrollLeft+m.x-r.left,cy:sc.scrollTop+m.y-r.top,ox:E.pagesEl.offsetLeft,oy:E.pagesEl.offsetTop};
         E.pagesEl.style.transformOrigin=(G.cx-G.ox)+'px '+(G.cy-G.oy)+'px'}
       if(e.cancelable)e.preventDefault()}},{passive:false});
   sc.addEventListener('touchmove',e=>{if(TT)for(const t of e.changedTouches){const p=TT.pos.get(t.identifier);if(p&&Math.hypot(t.clientX-p[0],t.clientY-p[1])>14)TT.moved=true}
@@ -5156,7 +5196,7 @@ function gestureSetup(sc){
         if(!f.length){const [fx,fy]=fingerVel(g.s);tsFling(-fx,-fy)}}
       /* one finger still down after a pinch or two-finger pan: keep scrolling with it, like iPadOS */
       if(f.length===1&&!fingerDraws()&&!penBusy()&&!isPalm(f[0])&&!(g.scaling&&SETTLE))panStart(f[0])
-      if(RQ.size&&!rqBusy)pumpRender()}
+      requestAnimationFrame(()=>{if(!G)sc.classList.remove('pinch-lock')});if(RQ.size&&!rqBusy)pumpRender()}
     if(TT&&e.touches.length===0){const T=TT;TT=null;if(E.tapUndo&&!E.readOnly&&T.ok&&!penBusy()&&!T.moved&&Date.now()-T.t<350){if(T.max===2){undo();toast('Undo',null,900)}else if(T.max===3){redo();toast('Redo',null,900)}}}};
   sc.addEventListener('touchend',end);sc.addEventListener('touchcancel',end)}
 /* pinch helpers: the page picture is scaled on the GPU while your fingers move (one update per frame), pages are only laid out again
@@ -5733,7 +5773,7 @@ function togglePanel(kind,force){if(kind==='find')setTimeout(ensureTextLayers,0)
   for(const k of ['find','comments','ai']){const b=$('#b-'+k);if(b)b.classList.toggle('on',E.panel===k)}setTimeout(onResize,10)}
 function renderPanel(){if(!E.panel)return;if(!E.panelEl){E.panelEl=h('aside',{class:'panel'});E.body.append(E.panelEl)}const P0=E.panelEl;P0.innerHTML='';
   const head=(t)=>h('header',null,h('h3',null,t),h('button',{class:'ib','aria-label':'Close panel',onclick:()=>togglePanel(E.panel)},ico('x')));
-  if(E.panel==='find')findPanel(P0,head);else if(E.panel==='comments')commentsPanel(P0,head);else if(E.panel==='ai')AI.panel(P0,head,aiContext,{title:()=>E.note.title,folderId:()=>E.note.folderId,subjectId:()=>E.note.subjectId})}
+  if(E.panel==='find')findPanel(P0,head);else if(E.panel==='comments')commentsPanel(P0,head);else if(E.panel==='ai'&&!S.sample)claudePanel(P0,head);else if(E.panel==='ai')AI.panel(P0,head,aiContext,{title:()=>E.note.title,folderId:()=>E.note.folderId,subjectId:()=>E.note.subjectId})}
 let findQ='';
 function findPanel(P0,head){const inp=h('input',{class:'input',id:'find-q',type:'search',placeholder:'Search this document',value:findQ,'aria-label':'Search this document'});const out=h('div',{class:'pbody'});
   P0.append(head('Find'),h('div',{style:{padding:'10px 14px 0'}},inp),out);const run=debounce(async()=>{findQ=inp.value.trim();out.innerHTML='';clearHits();if(findQ.length<2){out.append(h('p',{style:{color:'var(--muted)',margin:0,fontSize:'13.5px'}},'Type at least two letters. Searches PDF text, text boxes, comments, highlights and converted handwriting.'));return}
@@ -5747,6 +5787,51 @@ function findPanel(P0,head){const inp=h('input',{class:'input',id:'find-q',type:
     for(const pv of E.views.values())markHits(pv)},250);inp.addEventListener('input',run);run();setTimeout(()=>inp.focus(),20)}
 function clearHits(){$$('.textLayer span.hit').forEach(s=>s.classList.remove('hit'))}
 function markHits(pv){if(!pv||!findQ||E.panel!=='find')return;const q=findQ.toLowerCase();for(const s of $$('span',pv.tl))if(s.textContent.toLowerCase().includes(q))s.classList.add('hit')}
+/* ---------- Ask Claude (Nov 27): hand-off from the GitHub / Home Screen Folio ----------
+   Outside Claude there is no Claude connection here, so this hands the question over: it builds a prompt from this page
+   (or the whole document, or what you selected) and opens Claude with it prefilled (claude.ai/new?q=…), on your own
+   Claude plan at no extra cost. The full prompt is also copied, in case the text doesn't come through (e.g. in the app). */
+const CL={scope:'page',q:'',preset:null,sel:'',ctx:null,tok:0};
+const CL_MAX=12000;
+const CL_QUICK=[['Explain simply','Explain this to me simply, like a first-year med student, step by step. Then check my understanding with one question.'],
+  ['Quiz me','Quiz me on this with 5 questions, one at a time. Wait for my answer before giving the correct one, then grade me and explain what I missed.'],
+  ['Flashcards','Make 12 flashcards from this as a table with columns Front | Back, high-yield facts first.'],
+  ['Summarize','Summarize this in 6 to 10 bullets, high-yield points first.'],
+  ['Key terms','List the key terms in this with a one-line definition each.'],
+  ['Mnemonics','Give me memorable mnemonics for the lists and sequences in this.']];
+async function clPageText(i){const pg=E.pages.get(E.order[i]);if(!pg)return'';const t=[];if(pg.kind==='pdf'){try{t.push(await pdfPageText(pg.assetId,pg.pdfPage))}catch(e){}}
+  if(pg.ocr)t.push('[my handwriting] '+pg.ocr);
+  for(const it of pg.items||[]){if(it.type==='text'&&it.text)t.push('[my text box] '+it.text);if(it.type==='note'&&it.text)t.push('[my comment] '+it.text);if(it.type==='mark')t.push('[I highlighted] '+(it.text||'')+(it.note?' (my comment: '+it.note+')':''))}
+  return t.join('\n').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim()}
+async function clRefresh(){const tok=++CL.tok,i=E.current||0;let ctx;
+  if(CL.scope==='none')ctx={label:'',text:''};else if(CL.scope==='sel')ctx={label:'a passage I selected',text:CL.sel};
+  else if(CL.scope==='doc'){const c=await aiContext();ctx={label:'my whole document',text:c.text||''}}else ctx={label:'page '+(i+1),text:await clPageText(i)};
+  if(tok!==CL.tok)return;CL.ctx=ctx;clStatus()}
+function clPrompt(q){const ctx=CL.ctx||{text:''},body=(ctx.text||'').trim(),title=(E.note&&E.note.title)||'my notes';
+  const Q3='"'.repeat(3);return body?q+'\n\nHere is '+ctx.label+' from my study notes "'+title+'":\n'+Q3+'\n'+body+'\n'+Q3:q}
+function clStatus(msg){const el=E.panelEl&&E.panelEl.querySelector('.cl-status');if(!el)return;if(msg){el.innerHTML=msg;return}const c=CL.ctx;
+  for(const a of E.panelEl.querySelectorAll('.cl-quick a,.cl-go'))a.classList.toggle('wait',!c);
+  if(!c){el.textContent='Getting the text ready…';return}
+  el.textContent=CL.scope==='none'?'Your selected passage is already in the question.':!c.text.trim()?'No text found on '+c.label+' (scanned pages have none). Claude gets only your question.':
+    'Sends '+c.label+' ('+c.text.length.toLocaleString()+' characters) with your question.'+(clPrompt('').length>CL_MAX?' It is long: Claude gets the first part, and the whole thing is copied for pasting.':'')}
+/* runs inside the tap, before the link opens: sets the link and copies the prompt (both must happen in the tap on iPad) */
+function clGo(e,a,q){if(!CL.ctx){e.preventDefault();clStatus('Still getting the text ready. Try again in a second.');return}
+  q=(q||'').trim();if(!q){e.preventDefault();const ta=E.panelEl.querySelector('.cl-body textarea');if(ta){ta.focus();clStatus('Type a question first, or tap one of the buttons above.')}return}
+  const full=clPrompt(q);let p=full;if(p.length>CL_MAX)p=p.slice(0,CL_MAX)+'\n…(cut short here: the full text is on my clipboard)';
+  a.href='https://claude.ai/new?q='+encodeURIComponent(p);let copied=false;try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(full).catch(()=>{});copied=true}}catch(_){}
+  if(CL.scope==='none'){CL.preset=null}
+  clStatus('<b>Opened Claude.</b> '+(copied?'The question and text are also copied: if they are not filled in, paste them (long-press › Paste or ⌘V).':'If the text is not filled in, copy it from here and paste it.'))}
+function claudePanel(P0,head){P0.append(head('Ask Claude'));const body=h('div',{class:'pbody cl-body'});P0.append(body);
+  const s0=(()=>{try{const t=getSelection().toString().trim();return t.length>2?t.slice(0,20000):''}catch(_){return''}})();if(s0){CL.sel=s0;if(CL.scope!=='none')CL.scope='sel'}else if(CL.scope==='sel'&&!CL.sel)CL.scope='page';
+  body.append(h('p',{class:'cl-note'},'Opens Claude with your question and the text from your notes, on your own Claude plan. Answers stay in Claude; nothing extra to pay.'));
+  const scopes=[['page','This page'],['doc','Whole document']];if(CL.sel)scopes.push(['sel','Selection']);
+  const seg=h('div',{class:'seg',role:'group','aria-label':'What Claude reads'});const segFill=()=>{seg.innerHTML='';for(const [k,l] of scopes)seg.append(h('button',{class:'btn'+(CL.scope===k?' on':''),'aria-pressed':CL.scope===k?'true':'false',onclick:()=>{CL.scope=k;CL.preset=null;CL.ctx=null;segFill();clStatus();clRefresh()}},l))};segFill();
+  body.append(h('div',null,h('div',{class:'cl-lbl'},'Claude reads'),seg));
+  body.append(h('div',null,h('div',{class:'cl-lbl'},'One tap'),h('div',{class:'cl-quick'},...CL_QUICK.map(([l,q])=>{const a=h('a',{href:'https://claude.ai/new',target:'_blank',rel:'noopener'},l);a.addEventListener('click',e=>clGo(e,a,q));return a}))));
+  const ta=h('textarea',{'aria-label':'Your question for Claude',placeholder:'Or ask your own question…'});ta.value=CL.preset||CL.q||'';ta.addEventListener('input',()=>{if(CL.preset!=null)CL.preset=ta.value;else CL.q=ta.value});
+  const go=h('a',{class:'cl-go',href:'https://claude.ai/new',target:'_blank',rel:'noopener'},ico('spark'),'Ask Claude');go.addEventListener('click',e=>clGo(e,go,ta.value));
+  body.append(h('div',null,h('div',{class:'cl-lbl'},'Your question'),ta),go,h('div',{class:'cl-status','aria-live':'polite'}));
+  CL.ctx=null;clStatus();clRefresh()}
 function commentsPanel(P0,head){const all=cmAll(true),nC=all.filter(e=>e.it.type==='note').length,nH=all.length-nC;
   P0.append(head('Comments'+(all.length?' · '+all.length:'')));
   const inp=h('input',{class:'input',type:'search',placeholder:'Search comments',value:CM.q,'aria-label':'Search comments'});
@@ -5775,7 +5860,7 @@ async function aiContext(){const parts=[];for(let i=0;i<E.order.length;i++){cons
   if(t.length)parts.push('--- Page '+(i+1)+' ---\n'+t.join('\n'))}
   let ctx=parts.join('\n\n');const inkPages=E.order.filter(id=>{const p=E.pages.get(id);return p&&p.kind!=='pdf'&&(p.strokes||[]).length&&!p.ocr}).length;
   return{text:ctx.slice(0,180000),note:inkPages?inkPages+' page(s) have handwriting that has not been converted to text yet, so Claude cannot read it. Use “Convert handwriting” first.':''}}
-function openAI(prompt){togglePanel('ai',true);setTimeout(()=>AI.ask(prompt),50)}
+function openAI(prompt){if(!S.sample){CL.preset=prompt;CL.scope='none';togglePanel('ai',true);return}togglePanel('ai',true);setTimeout(()=>AI.ask(prompt),50)}
 
 /* ---------- handwriting → text ---------- */
 async function convertPage(id,strokesOnly){const pg=E.pages.get(id);if(!pg)return;const page=strokesOnly?Object.assign({},pg,{strokes:strokesOnly,items:[]}):Object.assign({},pg,{items:(pg.items||[]).filter(i=>i.type==='text')});
