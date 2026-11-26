@@ -4404,7 +4404,7 @@ function drawTemplate(ctx,tpl,paper,W,H){const s=W/1000;const dark=paper==='dark
   ctx.restore()}
 
 /* strokes: points stored as ints (logical × 10) in [x, y, pressure 0..9] triples */
-function strokeWidthAt(st,pr){return st.t==='hl'?st.w:Math.max(.35,st.w*(.35+.85*pr/9))}
+function strokeWidthAt(st,pr){return st.t==='hl'?st.w:st.tip==='ball'?Math.max(.35,st.w*.8):Math.max(.35,st.w*(.35+.85*pr/9))}/* tip 'ball': ballpen, one even width */
 function drawStroke(ctx,st,s){
   if(st.t==='shape')return drawShape(ctx,st,s);const p=st.p;if(!p||p.length<3)return;
   ctx.save();ctx.strokeStyle=st.c;ctx.fillStyle=st.c;ctx.lineJoin='round';
@@ -4606,6 +4606,8 @@ function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   if(t==='pen'||t==='shape'){for(const c of PEN_COLORS)R.append(colorBtn(c,p));R.append(customColor(p))}
   if(t==='hl'){for(const c of HL_COLORS)R.append(colorBtn(c,p))}
   if(t==='pen'||t==='shape')for(const w of PEN_SIZES)R.append(sizeBtn(w,p,w*2.2));
+  if(t==='pen'){const tp=p.tip==='ball'?'ball':'press';
+    R.append(h('div',{class:'seg'},...[['ball','Ballpen','Even line, like a ballpoint: the same width however hard you press'],['press','Pressure','Line gets thicker the harder you press (Apple Pencil)']].map(([k,l,tip])=>h('button',{class:'btn'+(tp===k?' on':''),'aria-pressed':tp===k?'true':'false',title:tip,onclick:()=>{p.tip=k;saveToolPrefs();renderTools()}},l))))}
   if(t==='pen'){const pm=p.m==='free'?'free':'auto',sn=p.snap!==false;
     R.append(h('div',{class:'seg'},...[['auto','Auto','A long, nearly level line (an underline or a cross-out) straightens itself when you lift, and on a PDF snaps to exactly the words. Handwriting is never changed'],['free','Freehand','Lines stay exactly as you draw them (hold still at the end to straighten one)']].map(([k,l,tip])=>h('button',{class:'btn'+(pm===k?' on':''),'aria-pressed':pm===k?'true':'false',title:tip,onclick:()=>{p.m=k;saveToolPrefs();renderTools()}},l))));
     if(pm==='auto')R.append(h('button',{class:'btn'+(sn?' on':''),'aria-pressed':sn?'true':'false',title:'On a PDF, a line under words becomes a clean underline of exactly those words; a line through them becomes a clean strikethrough',onclick:()=>{p.snap=!sn;saveToolPrefs();renderTools()}},'Snap to text'))}
@@ -4921,7 +4923,7 @@ function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointe
   ensureLive(pv);E.ptr={id:e.pointerId,type:e.pointerType,pv,t,x0:x,y0:y,lx:x,ly:y,last:Date.now(),t0:Date.now(),pr:pr};if(t==='hl'){pv.live.style.opacity=String(HL_A);pv.live.style.mixBlendMode=darkPaper(pv)?'':'multiply'}
   if(t==='hl'){const P0=E.ptr;P0.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),5]};P0.f={};oeStep(P0.f,x*pv.s,y*pv.s,e.timeStamp||performance.now());P0.sx=x;P0.sy=y;P0.rx=x;P0.ry=y;P0.tail=null;
     if(hlMode(p)==='line'){P0.straight=true;P0.st.p.push(P0.st.p[0],P0.st.p[1],5)}else P0.still=setTimeout(()=>straighten(),600);hlPaint(P0);if(p.snap!==false)hlWordsLoad(E.pages.get(pv.id))}
-  else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st);if(p.m!=='free'&&p.snap!==false){const g=E.pages.get(pv.id);if(g&&g.kind==='pdf')hlWordsLoad(g)}}
+  else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};if(p.tip==='ball')E.ptr.st.tip='ball';E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st);if(p.m!=='free'&&p.snap!==false){const g=E.pages.get(pv.id);if(g&&g.kind==='pdf')hlWordsLoad(g)}}
   else if(t==='eraser'){E.ptr.erased=false;erase(pv,x,y)}
   else if(t==='lasso'){if(E.sel&&E.sel.pid===pv.id&&inBox(E.sel.box,x,y)){pushUndo(pv.id);pg.strokes=pg.strokes.map((st,i)=>E.sel.strokes.has(i)?clone(st):st);E.ptr.moving=true;E.ptr.sprite=selSprite(pv)}else{clearSel();E.ptr.poly=[x,y]}}
   else if(t==='shape'){E.ptr.shape={t:'shape',k:p.k,c:p.c,w:p.w,a:[x,y,x,y].map(v=>Math.round(v*10))}}
@@ -4961,7 +4963,7 @@ function move(e,pv){const P0=E.ptr;if(!P0){if(e.pointerType==='pen'&&!e.buttons)
 const normBox=b=>[Math.min(b[0],b[2]),Math.min(b[1],b[3]),Math.abs(b[2]-b[0]),Math.abs(b[3]-b[1])];
 function up(e,pv,cancel){if(E.tap&&E.tap.id===e.pointerId){const T=E.tap;E.tap=null;try{T.pv.cap.releasePointerCapture(e.pointerId)}catch(_){}
     if(!cancel&&Math.hypot(e.clientX-T.x,e.clientY-T.y)<12&&T.pv.rendered){const [x,y]=clientToL(T.pv,T.x,T.y);if(T.peek){peekAt(T.pv,x,y);return}hideFloat();closePop();tapAction(T.pv,x,y,T.x,T.y,effTool())}return}
-  const P0=E.ptr;if(!P0||P0.id!==e.pointerId)return;pv=P0.pv;E.ptr=null;clearTimeout(P0.still);if(P0.raf){cancelAnimationFrame(P0.raf);P0.raf=0}
+  const P0=E.ptr;if(!P0||P0.id!==e.pointerId)return;pv=P0.pv;E.ptr=null;clearTimeout(P0.still);renderSkipped();if(P0.raf){cancelAnimationFrame(P0.raf);P0.raf=0}
   if(P0.st&&P0.st.t==='hl'&&!P0.straight&&P0.rx!=null){const p=P0.st.p,n=p.length,ex=Math.round(P0.rx*10),ey=Math.round(P0.ry*10);if(Math.hypot(ex-p[n-3],ey-p[n-2])>=2)p.push(ex,ey,5)}/* end where the nib lifted */const pg=E.pages.get(pv.id);if(P0.type==='pen')E.penAt=Date.now();
   if(cancel&&((P0.st&&P0.st.p.length>=6)||(P0.shape)))cancel=false;/* the browser cancelled the pointer: keep the stroke instead of losing it */
   resetLiveStyle(pv);
@@ -4990,7 +4992,10 @@ function inputMenu(btn){const m=E.input;openMenu(btn,[{head:'Write with'},
   {icon:'undo',label:'Two-finger tap to undo',sub:'Three-finger tap redoes.',check:E.tapUndo,fn:()=>{E.tapUndo=!E.tapUndo;setPref('tapUndo',E.tapUndo);toast(E.tapUndo?'Two-finger tap undoes':'Tap gestures off')}}],{alignRight:true,wide:true})}
 function finishPtr(P0){if(P0&&E.ptr===P0)up({pointerId:P0.id,clientX:0,clientY:0},P0.pv,false)}
 addEventListener('pointerup',e=>{if(E.ptr&&E.ptr.id===e.pointerId)up(e,E.ptr.pv,false)},true);addEventListener('pointercancel',e=>{if(E.ptr&&E.ptr.id===e.pointerId)up(e,E.ptr.pv,true)},true);
-function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;if(P0.laser)laserUp();clearTimeout(P0.still);resetLiveStyle(P0.pv);try{P0.pv.cap.releasePointerCapture(P0.id)}catch(_){}
+/* pumpRender won't redraw a page while the Pencil is on it, and used to drop that page's sharpening for good: after a zoom or
+   scroll the page then stayed stretched and blurry. Every stroke end now re-queues any page still waiting to sharpen. */
+function renderSkipped(){setTimeout(()=>{if(E.ptr)return;for(const v of E.views.values())if(v.upgrade&&v.visible&&v.rendered)queueRender(v)},0)}
+function cancelStroke(){const P0=E.ptr;if(!P0)return;E.ptr=null;renderSkipped();if(P0.laser)laserUp();clearTimeout(P0.still);resetLiveStyle(P0.pv);try{P0.pv.cap.releasePointerCapture(P0.id)}catch(_){}
   clearLive(P0.pv);if(P0.erased||P0.moving){swap(E.undo,E.redo);E.redo.pop();updUndo()}if(P0.moving)showSelFloat(P0.pv);drawInk(P0.pv)}
 function hover(e,pv){const t=E.tool;if(t==='laser'&&pv.rendered){const [x,y]=toL(e,pv);laserHover(pv,x,y);return}if(t!=='pen'&&t!=='hl'&&t!=='eraser')return;if(!pv.rendered)return;ensureLive(pv);const [x,y]=toL(e,pv);if(t==='eraser'){eraserCursor(pv,[x,y,(E.tp.eraser.w||20)/2]);return}
   const p=P(),c=pv.live.getContext('2d'),s=pv.s*pv.dpr;clearLive(pv);
