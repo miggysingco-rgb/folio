@@ -4606,6 +4606,9 @@ function renderTools(){const T=E.toolsEl;T.innerHTML='';const ro=E.readOnly;
   if(t==='pen'||t==='shape'){for(const c of PEN_COLORS)R.append(colorBtn(c,p));R.append(customColor(p))}
   if(t==='hl'){for(const c of HL_COLORS)R.append(colorBtn(c,p))}
   if(t==='pen'||t==='shape')for(const w of PEN_SIZES)R.append(sizeBtn(w,p,w*2.2));
+  if(t==='pen'){const pm=p.m==='free'?'free':'auto',sn=p.snap!==false;
+    R.append(h('div',{class:'seg'},...[['auto','Auto','A long, nearly level line (an underline or a cross-out) straightens itself when you lift, and on a PDF snaps to exactly the words. Handwriting is never changed'],['free','Freehand','Lines stay exactly as you draw them (hold still at the end to straighten one)']].map(([k,l,tip])=>h('button',{class:'btn'+(pm===k?' on':''),'aria-pressed':pm===k?'true':'false',title:tip,onclick:()=>{p.m=k;saveToolPrefs();renderTools()}},l))));
+    if(pm==='auto')R.append(h('button',{class:'btn'+(sn?' on':''),'aria-pressed':sn?'true':'false',title:'On a PDF, a line under words becomes a clean underline of exactly those words; a line through them becomes a clean strikethrough',onclick:()=>{p.snap=!sn;saveToolPrefs();renderTools()}},'Snap to text'))}
   if(t==='hl'){for(const w of HL_SIZES)R.append(sizeBtn(w,p,w/2.2));const hk=hlMode(p),sn=p.snap!==false;
     R.append(h('div',{class:'seg'},...[['auto','Auto','A roughly straight stroke straightens itself when you lift, and on a PDF it snaps cleanly to the words under it. Curves and circles stay as drawn'],['free','Freehand','Left exactly as you draw it (smoothed)'],['line','Straight','Always a straight line, snapped level to the line of text']].map(([k,l,tip])=>h('button',{class:'btn'+(hk===k?' on':''),'aria-pressed':hk===k?'true':'false',title:tip,onclick:()=>{p.m=k;saveToolPrefs();renderTools()}},l))));
     if(hk!=='free')R.append(h('button',{class:'btn'+(sn?' on':''),'aria-pressed':sn?'true':'false',title:'On a PDF, a straight highlight snaps to exactly the words it covers, one clean band per line',onclick:()=>{p.snap=!sn;saveToolPrefs();renderTools()}},'Snap to text'))}
@@ -4848,6 +4851,25 @@ function hlSnapText(lines,st){const p=st.p,n=p.length/3,pts=[];
     if(!ws.length)continue;const h=L.y1-L.y0,px=Math.max(1,h*.1),py=h*.06;bands.push({x0:ws[0].x0-px,x1:ws[ws.length-1].x1+px,y0:L.y0-py,y1:L.y1+py})}
   return bands.sort((a,b)=>a.y0-b.y0)}
 const hlBand=(st,b)=>{const y=Math.round((b.y0+b.y1)*5);return{t:'hl',c:st.c,w:Math.round((b.y1-b.y0)*10)/10,p:[Math.round(b.x0*10),y,5,Math.round(b.x1*10),y,5],snap:1}};
+/* ---------- pen: tidy underlines and cross-outs (E.tp.pen.m 'auto' default | 'free'; E.tp.pen.snap default on) ----------
+   Handwriting is never touched: only a long (>= 40 units, about 1 cm), nearly level (<= 12 deg), very straight line counts.
+   It straightens itself on lift; on a PDF it then snaps to exactly the words it ran under (clean underline) or through
+   (clean strikethrough). Pressure becomes the stroke's average so the line keeps its weight. */
+function penSnapText(lines,st){const p=st.p,y=(p[1]+p[4])/20,a=Math.min(p[0],p[3])/10,b=Math.max(p[0],p[3])/10;let best=null,bd=1e9,kind='';
+  for(const L of lines){const S=L.size,B=L.base,zs=[['u',B-.12*S,B+.55*S],['s',B-.62*S,B-.12*S]];
+    for(const [k,z0,z1] of zs){if(y<z0||y>z1)continue;const d=Math.abs(y-(z0+z1)/2);if(d<bd){bd=d;best=L;kind=k}}}
+  if(!best)return null;const ws=best.words.filter(w=>{const ov=Math.min(w.x1,b)-Math.max(w.x0,a),ww=w.x1-w.x0;return ov>=Math.min(ww*.4,ww-.01)||ov>=6});if(!ws.length)return null;
+  const S=best.size,yy=kind==='u'?best.base+Math.max(.1*S,1)+st.w*.5:best.base-.3*S,pr=p[2],Y=Math.round(yy*10);
+  return[Math.round(ws[0].x0*10),Y,pr,Math.round(ws[ws.length-1].x1*10),Y,pr]}
+function penTidy(pv,pg,st){const pp=E.tp.pen||{};if(pp.m==='free')return[st];const n=st.p.length/3;if(n<2)return[st];
+  const g=hlGeom(st.p);if(g.ang>12)return[st];if(n>2&&!(g.ch>=40&&g.dev<=Math.max(st.w*1.6,3.5,g.ch*.04)))return[st];/* judged by sideways wander, not path length: raw Pencil tremor inflates length */if(n===2&&g.ch<40)return[st];
+  if(n>2){let t=0;for(let i=0;i<n;i++)t+=st.p[i*3+2];const pr=Math.round(t/n),q=st.p;st.p=[q[0],q[1],pr,q[(n-1)*3],q[(n-1)*3+1],pr]}/* auto-straighten */
+  hlSnap(st.p);
+  if(pp.snap!==false&&pg&&pg.kind==='pdf'){const lines=hlWordsNow(pg);
+    if(lines){const r=penSnapText(lines,st);if(r)st.p=r}
+    else hlWordsLoad(pg).then(L=>{const r=penSnapText(L||[],st),i=(pg.strokes||[]).indexOf(st);if(!r||i<0)return;const ns=Object.assign({},st,{p:r});pg.strokes.splice(i,1,ns);
+      if(E.views.get(pv.id)===pv&&pv.ink.width){const a=strokeBoxC(st),c=strokeBoxC(ns);drawInkRegion(pv,[Math.min(a[0],c[0]),Math.min(a[1],c[1]),Math.max(a[2],c[2]),Math.max(a[3],c[3])],st.w*2+2)}markDirty(pv.id)})}
+  return[st]}
 /* on lift: what a highlight stroke becomes (a list, since one stroke over two lines of text gives two bands) */
 function hlTidy(pv,pg,st,P0){const hp=E.tp.hl||{},m=hlMode(hp);if(m==='free')return[st];
   const g=hlGeom(st.p),straight=st.p.length===6,lineLike=straight||(g.ch>=Math.max(st.w*.5,8)&&g.ch/g.len>=.86&&g.dev<=Math.max(st.w*.75,7));if(!lineLike)return[st];
@@ -4899,7 +4921,7 @@ function down(e,pv){if(E.readOnly||!pv.rendered)return;if(e.button>0&&!(e.pointe
   ensureLive(pv);E.ptr={id:e.pointerId,type:e.pointerType,pv,t,x0:x,y0:y,lx:x,ly:y,last:Date.now(),t0:Date.now(),pr:pr};if(t==='hl'){pv.live.style.opacity=String(HL_A);pv.live.style.mixBlendMode=darkPaper(pv)?'':'multiply'}
   if(t==='hl'){const P0=E.ptr;P0.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),5]};P0.f={};oeStep(P0.f,x*pv.s,y*pv.s,e.timeStamp||performance.now());P0.sx=x;P0.sy=y;P0.rx=x;P0.ry=y;P0.tail=null;
     if(hlMode(p)==='line'){P0.straight=true;P0.st.p.push(P0.st.p[0],P0.st.p[1],5)}else P0.still=setTimeout(()=>straighten(),600);hlPaint(P0);if(p.snap!==false)hlWordsLoad(E.pages.get(pv.id))}
-  else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st)}
+  else if(t==='pen'){E.ptr.st={t,c:p.c,w:p.w,p:[Math.round(x*10),Math.round(y*10),pr]};E.ptr.still=setTimeout(()=>straighten(),600);liveSeg(pv,E.ptr.st);if(p.m!=='free'&&p.snap!==false){const g=E.pages.get(pv.id);if(g&&g.kind==='pdf')hlWordsLoad(g)}}
   else if(t==='eraser'){E.ptr.erased=false;erase(pv,x,y)}
   else if(t==='lasso'){if(E.sel&&E.sel.pid===pv.id&&inBox(E.sel.box,x,y)){pushUndo(pv.id);pg.strokes=pg.strokes.map((st,i)=>E.sel.strokes.has(i)?clone(st):st);E.ptr.moving=true;E.ptr.sprite=selSprite(pv)}else{clearSel();E.ptr.poly=[x,y]}}
   else if(t==='shape'){E.ptr.shape={t:'shape',k:p.k,c:p.c,w:p.w,a:[x,y,x,y].map(v=>Math.round(v*10))}}
@@ -4944,8 +4966,8 @@ function up(e,pv,cancel){if(E.tap&&E.tap.id===e.pointerId){const T=E.tap;E.tap=n
   if(cancel&&((P0.st&&P0.st.p.length>=6)||(P0.shape)))cancel=false;/* the browser cancelled the pointer: keep the stroke instead of losing it */
   resetLiveStyle(pv);
   if(P0.st&&!cancel&&isTapStroke(P0,pv)&&peekAt(pv,P0.x0,P0.y0,true)){clearLive(pv)}/* a Pencil tap on covered tape peels it back instead of leaving a dot */
-  else if(P0.st&&!cancel){pushUndo(pv.id);const L=P0.st.t==='hl'?hlTidy(pv,pg,P0.st,P0):[P0.st];(pg.strokes=pg.strokes||[]).push(...L);clearLive(pv);if(E.sel)drawInk(pv);
-    else if(P0.st.t==='hl'){let u=null,w=0;for(const q of L){const r=strokeBoxC(q);w=Math.max(w,q.w);u=u?[Math.min(u[0],r[0]),Math.min(u[1],r[1]),Math.max(u[2],r[2]),Math.max(u[3],r[3])]:r.slice()}drawInkRegion(pv,u,w/2+2)}else if(pv.ink.width)drawStroke(pv.ink.getContext('2d'),P0.st,pv.s*pv.dpr);markDirty(pv.id)}
+  else if(P0.st&&!cancel){pushUndo(pv.id);const L=P0.st.t==='hl'?hlTidy(pv,pg,P0.st,P0):P0.st.t==='pen'?penTidy(pv,pg,P0.st):[P0.st];(pg.strokes=pg.strokes||[]).push(...L);clearLive(pv);if(E.sel)drawInk(pv);
+    else if(P0.st.t==='hl'){let u=null,w=0;for(const q of L){const r=strokeBoxC(q);w=Math.max(w,q.w);u=u?[Math.min(u[0],r[0]),Math.min(u[1],r[1]),Math.max(u[2],r[2]),Math.max(u[3],r[3])]:r.slice()}drawInkRegion(pv,u,w/2+2)}else if(pv.ink.width)for(const q of L)drawStroke(pv.ink.getContext('2d'),q,pv.s*pv.dpr);markDirty(pv.id)}
   else if(P0.t==='eraser'){if(P0.erased)markDirty(pv.id);eraserCursor(pv,null)}
   else if(P0.poly){finishLasso(pv,P0.poly)}
   else if(P0.moving){if(P0.sprite){clearLive(pv);drawInk(pv)}markDirty(pv.id);showSelFloat(pv)}
