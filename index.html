@@ -3916,7 +3916,7 @@ var FOUI = (function () {
   if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('offline cache', e); }); });
     /* the saved copy opens instantly; when a newer Folio has been downloaded in the background, offer it */
-    window.FOLIO_BUILD = 'folio-shell 2026-11-27 01:30 ipad-claude';
+    window.FOLIO_BUILD = 'folio-shell 2026-11-27 00:20 panel-anchor';
     navigator.serviceWorker.addEventListener('message', function (e) {
       var d = e.data || {}; if (d.type !== 'folio-update' || (d.version && d.version === window.FOLIO_BUILD) || document.getElementById('fo-upd')) return;
       var b = document.createElement('button'); b.id = 'fo-upd'; b.type = 'button'; b.textContent = 'New version of Folio ready \u00b7 Tap to reload';
@@ -4800,7 +4800,12 @@ function layoutAll(){const W=pageW();for(const id of E.order){const pv=E.views.g
   if(changed&&pv.rendered){for(const c of [pv.bg,pv.ink,pv.live])if(c.width){c.style.width=iw+'px';c.style.height=ih+'px'}if(pv.bg.width)pv.dpr=pv.bg.width/iw;
     if(pv.tlW){pv.tl.style.setProperty('--scale-factor',iw/pv.tlW);pv.tl.style.setProperty('--total-scale-factor',iw/pv.tlW)}placeItems(pv);pv.lowres=true;pv.upgrade=true;if(pv.visible)queueRender(pv)}
   else if(changed&&!pv.rendered){pv.token++;if(pv.visible)queueRender(pv)}else if(pv.rendered)placeItems(pv)}measureOffs()}
-const onResize=debounce(()=>{if(E.nid)layoutAll()},150);
+/* the page area changed width (a side panel opened or closed, thumbnails, rotating the iPad, the keyboard): pages are fitted
+   again, and the same spot of the same page stays in view. Before, the scroll distance stayed the same while every page above
+   got shorter or taller, so opening Ask Claude or Comments jumped several pages (Safari has no scroll anchoring to hide it). */
+const onResize=debounce(()=>{if(!E.nid)return;const sc=E.scroller;if(!sc){layoutAll();return}const ax=sc.clientWidth/2,ay=sc.clientHeight/3,A=pageAnchor(sc.scrollLeft+ax,sc.scrollTop+ay);
+  layoutAll();if(A){const pv=E.views.get(A.id);if(pv){const el=pv.el;sc.scrollLeft=Math.max(0,el.offsetLeft+A.fx*el.offsetWidth-ax);sc.scrollTop=Math.max(0,el.offsetTop+A.fy*el.offsetHeight-ay);
+    E.zlock={L:sc.scrollLeft,T:sc.scrollTop,until:performance.now()+300};lockFrame()}}onScroll()},150);
 /* zooming keeps the same spot of the same page under your fingers (or the cursor, or the middle of the screen).
    It works from page positions rather than a fraction of the whole scroll height, which drifted by several pages
    in long documents because the gaps between pages do not grow with the zoom. */
