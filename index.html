@@ -264,6 +264,19 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:60
 body:has(.ed) .fo-pill{display:none}
 .scroller.pinch-lock{overflow:hidden!important}
 #fo-upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:200;height:40px;padding:0 18px;border-radius:999px;border:0;background:var(--accent,#2E55E6);color:#fff;font:600 14px var(--f-body,system-ui,sans-serif);box-shadow:0 10px 30px -8px rgba(0,0,0,.45);cursor:pointer}
+.bm-tools{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.panel .pbody.bm-list{gap:2px;padding:8px 8px 14px}
+.bm-row{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 10px;border-radius:9px;cursor:pointer;font-size:14px;color:var(--ink);-webkit-tap-highlight-color:transparent}
+.bm-row:hover{background:var(--surface2)}
+.bm-row.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.bm-row.lv1{font-weight:600}
+.bm-row.lv2{padding-left:24px}
+.bm-row.lv3{padding-left:38px;font-size:13.5px;color:var(--muted)}
+.bm-row.on.lv3{color:var(--accent)}
+.bm-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.bm-pn{font:500 11.5px var(--f-mono);color:var(--faint);flex:none}
+.bm-row .input{flex:1;height:34px;font-size:14px}
+.bm-row .ib{width:32px;height:32px}
 .cl-body{gap:14px}
 .cl-note{margin:0;font-size:13px;color:var(--muted);line-height:1.45}
 .cl-lbl{font:600 11px var(--f-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
@@ -3916,7 +3929,7 @@ var FOUI = (function () {
   if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('offline cache', e); }); });
     /* the saved copy opens instantly; when a newer Folio has been downloaded in the background, offer it */
-    window.FOLIO_BUILD = 'folio-shell 2026-11-27 00:20 panel-anchor';
+    window.FOLIO_BUILD = 'folio-shell 2026-11-27 00:40 bookmarks';
     navigator.serviceWorker.addEventListener('message', function (e) {
       var d = e.data || {}; if (d.type !== 'folio-update' || (d.version && d.version === window.FOLIO_BUILD) || document.getElementById('fo-upd')) return;
       var b = document.createElement('button'); b.id = 'fo-upd'; b.type = 'button'; b.textContent = 'New version of Folio ready \u00b7 Tap to reload';
@@ -3948,6 +3961,7 @@ function ago(ts){if(!ts)return'';const d=(Date.now()-ts)/1000;if(d<60)return'jus
 const today=()=>new Date().toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
 
 const IC={
+ bookmark:'<path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1z"/>',
  stylus:'<path d="m15.5 4.5 4 4"/><path d="M18.4 2.6a2 2 0 0 1 2.9 2.9L8 18.8 3 21l2.2-5Z"/><path d="M3 21l2-1"/>',
  ext:'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
  play:'<rect x="3" y="4" width="18" height="14" rx="3"/><path d="m10 8.5 5 2.5-5 2.5Z"/><path d="M8 21h8"/>',
@@ -4177,7 +4191,7 @@ async function boot(){
     if(S.route.name==='lib')renderLibrary()}).catch(()=>{}));
   S.db=await dbP;
   if(!S.db){S.offline=true;S.loaded=true;render();return}
-  let got=0;const done=()=>{if(++got===3){S.loaded=true;openFromHash()}};const seen={};
+  let got=0;const done=()=>{if(++got===3){S.loaded=true;openFromHash();setTimeout(()=>bmBackfill().catch(e=>console.warn(e)),3000)}};const seen={};
   for(const col of ['folders','subjects','notes']){
     S.db.collection(col).limit(1000).onSnapshot(snap=>{const m=new Map();snap.docs.forEach(d=>m.set(d.id,{id:d.id,...d.data()}));S[col]=m;
       if(!seen[col]){seen[col]=1;done()}onData(col)},err=>{console.warn(col,err);toast(errText(err),'err')})}
@@ -4434,7 +4448,52 @@ async function importOne(f,target,prog){const isPdf=f.type==='application/pdf'||
   else{const img=await loadImage(up.url);pages.push(newPage({kind:'img',assetId:up.id,aspect:+(img.naturalHeight/img.naturalWidth).toFixed(4)}))}
   if(target)return pages;P.set('Saving pages…',.97);
   const id=await createNote({title,kind:'pages',origin:isPdf?'pdf':'image',cover:'page',folderId:curFolder(),subjectId:curSubject()},pages);
-  if(text.trim())dbSet('notetext/'+id,{text:text.replace(/\s+/g,' ').slice(0,200000)}).catch(()=>{});S.searchIdx=null;return id}
+  if(text.trim())dbSet('notetext/'+id,{text:text.replace(/\s+/g,' ').slice(0,200000)}).catch(()=>{});S.searchIdx=null;
+  if(isPdf)setTimeout(()=>waitNote(id).then(()=>autoBookmarkNote(id)).catch(e=>console.warn('bookmarks',e)),300);return id}
+/* ---------- bookmarks (Nov 27) ----------
+   note.bookmarks = [{id, pid, y, title, lv (1-3), auto}]; note.bmAuto = 'done' once automatic bookmarks were made (even if none were found).
+   Automatic bookmarks: the PDF's own table of contents (outline) when it has one; otherwise headings found in the text:
+   lines clearly bigger than the body text, levels by size, running headers/footers left out. */
+async function pdfBookmarks(assetId,pidOf){const lib=await pdfjs();const doc=await loadPdf(assetId);const N=doc.numPages,out=[];
+  try{const ol=await doc.getOutline();if(ol&&ol.length){const walk=async(items,lv)=>{for(const it of items){if(out.length>=400)return;let idx=null,y=0;
+        try{let d=it.dest;if(typeof d==='string')d=await doc.getDestination(d);if(Array.isArray(d)&&d[0]!=null){idx=typeof d[0]==='number'?d[0]:await doc.getPageIndex(d[0]);
+          if(d[1]&&d[1].name==='XYZ'&&d[3]!=null){const pg=await doc.getPage(idx+1),vp=pg.getViewport({scale:1}),q=vp.convertToViewportPoint(d[2]||0,d[3]);y=Math.max(0,q[1]*1000/vp.width-14)}}}catch(_){}
+        const t=String(it.title||'').replace(/\s+/g,' ').trim(),pid=idx!=null?pidOf(idx+1):null;if(t&&pid)out.push({id:uid(),pid,y:Math.round(y),title:t.slice(0,140),lv:Math.min(lv,3),auto:1});
+        if(it.items&&it.items.length)await walk(it.items,lv+1)}};await walk(ol,1)}}catch(e){console.warn('outline',e)}
+  if(out.length)return out;
+  const rows=[],chars=new Map();const M=Math.min(N,600);
+  for(let i=1;i<=M;i++){const pid=pidOf(i);if(!pid)continue;let pg,tc;try{pg=await doc.getPage(i);tc=await pg.getTextContent()}catch(_){continue}const vp=pg.getViewport({scale:1}),K=1000/vp.width,pr=[];
+    for(const it of tc.items){if(!it.str||!it.transform)continue;const tx=lib.Util.transform(vp.transform,it.transform),sz=Math.hypot(tx[2],tx[3])*K;if(sz<3||Math.abs(tx[1])>sz*.05/K||Math.abs(tx[2])>sz*.05/K)continue;
+      const x=tx[4]*K,y=tx[5]*K,w=Math.abs(it.width||0)*K,n=it.str.trim().length;const key=Math.round(sz*2)/2;chars.set(key,(chars.get(key)||0)+n);
+      let r=pr.find(r=>Math.abs(r.y-y)<sz*.4&&Math.abs(r.sz-sz)<sz*.12);if(!r){r={pid,page:i,y,sz,txt:'',xe:x};pr.push(r)}
+      if(r.txt&&x-r.xe>sz*.15&&!/\s$/.test(r.txt)&&!/^\s/.test(it.str))r.txt+=' ';r.txt+=it.str;r.xe=Math.max(r.xe,x+w)}
+    pr.sort((a,b)=>a.y-b.y);for(const r of pr){r.txt=r.txt.replace(/\s+/g,' ').trim();if(r.txt)rows.push(r)}pg.cleanup()}
+  if(!rows.length)return out;let body=0,bn=-1;for(const [k,n] of chars)if(n>bn){bn=n;body=k}
+  let cand=rows.filter(r=>r.sz>=body*1.18&&r.txt.length>=3&&r.txt.length<=110&&/[A-Za-z]{2}/.test(r.txt)&&!/^(page\s*)?\d+(\s*(of|\/)\s*\d+)?$/i.test(r.txt));
+  /* a heading that wraps onto a second line of the same size becomes one bookmark */
+  const merged=[];for(const r of cand){const p=merged[merged.length-1];if(p&&p.page===r.page&&Math.abs(p.sz-r.sz)<r.sz*.08&&r.y-p.y2<r.sz*1.7&&(p.txt+r.txt).length<150){p.txt+=' '+r.txt;p.y2=r.y}else merged.push(Object.assign({y2:r.y},r))}
+  /* running headers / footers: the same words (numbers aside) at the same spot on many pages */
+  const seen=new Map(),key=r=>r.txt.toLowerCase().replace(/\d+/g,'#');for(const r of merged){const k=key(r),o=seen.get(k)||{n:0,lo:1e9,hi:-1e9};o.n++;o.lo=Math.min(o.lo,r.y);o.hi=Math.max(o.hi,r.y);seen.set(k,o)}
+  cand=merged.filter(r=>{const o=seen.get(key(r));return !(o.n>=3&&o.n>=M*.3&&o.hi-o.lo<8)});
+  const per=new Map();cand=cand.filter(r=>{const n=(per.get(r.page)||0)+1;per.set(r.page,n);return n<=4});
+  const lvSizes=[...new Set(cand.map(r=>Math.round(r.sz)))].sort((a,b)=>b-a);
+  for(const r of cand.slice(0,400))out.push({id:uid(),pid:r.pid,y:Math.max(0,Math.round(r.y-r.sz*1.15)),title:r.txt.slice(0,140),lv:Math.min(3,lvSizes.indexOf(Math.round(r.sz))+1),auto:1});
+  return out}
+/* bookmarks for a whole note: every PDF in it (a combined note can hold several), in page order */
+async function makeBookmarks(nid){const n=S.notes.get(nid);if(!n||n.kind!=='pages')return[];const pages=await getPages(nid,true);const order=n.pageIds||[];const byAsset=new Map();
+  for(const pid of order){const p=pages.get(pid);if(!p||p.kind!=='pdf'||!p.assetId)continue;if(!byAsset.has(p.assetId))byAsset.set(p.assetId,new Map());byAsset.get(p.assetId).set(p.pdfPage,pid)}
+  let all=[];for(const [a,m] of byAsset){try{all=all.concat(await pdfBookmarks(a,i=>m.get(i)))}catch(e){console.warn('bookmarks',e)}}
+  const pos=new Map(order.map((p,i)=>[p,i]));all.sort((a,b)=>(pos.get(a.pid)-pos.get(b.pid))||a.y-b.y);return all}
+async function autoBookmarkNote(nid,quiet){const n=S.notes.get(nid);if(!n||n.bmAuto)return 0;const marks=await makeBookmarks(nid);const cur=S.notes.get(nid);if(!cur)return 0;
+  const keep=(cur.bookmarks||[]).filter(b=>!b.auto);await dbUpd(notePath(nid),{bookmarks:keep.concat(marks),bmAuto:'done'}).catch(()=>{});
+  if(!quiet&&marks.length)toast('Added '+marks.length+' bookmark'+(marks.length===1?'':'s')+' to “'+(cur.title||'Untitled')+'”.');return marks.length}
+/* one-time: automatic bookmarks for the Renal Physiology documents already in the library (Migz asked for those only) */
+let bmFillRan=false;
+async function bmBackfill(){if(bmFillRan||!S.canWrite||!S.db)return;bmFillRan=true;
+  const hay=n=>[n.title||'',...(n.folderId?folderPath(n.folderId).map(f=>f.name):[]),(n.subjectId&&S.subjects.get(n.subjectId)||{}).name||''].join(' ');
+  const L=liveNotes().filter(n=>n.kind==='pages'&&n.origin==='pdf'&&!n.bmAuto&&!(n.bookmarks&&n.bookmarks.length)&&/renal|kidney|nephr/i.test(hay(n))&&/physio|guyton/i.test(hay(n)));
+  let tot=0,docs=0;for(const n of L){try{const k=await autoBookmarkNote(n.id,true);if(k){tot+=k;docs++}}catch(e){console.warn('backfill',e)}await sleep(200)}
+  if(tot)toast('Added '+tot+' bookmarks to '+docs+' Renal Physiology document'+(docs===1?'':'s')+'. Open one and tap the bookmark button.',null,6000)}
 function loadImage(src){return new Promise((res,rej)=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>res(i);i.onerror=rej;i.src=src})}
 const imgCache=new Map();function assetImage(id){if(!imgCache.has(id))imgCache.set(id,loadImage('/_blob/'+id).catch(e=>{imgCache.delete(id);throw e}));return imgCache.get(id)}
 
@@ -4659,7 +4718,7 @@ function close(){if(!E.nid)return;try{commitEdit()}catch(e){}try{flush()}catch(e
   for(const c of bgCache.values()){c.width=0;c.height=0}bgCache.clear();RQ.clear();E.views=new Map();E.livePv=null;
   for(const p of pdfCache.values())p.then(d=>d.cleanup&&d.cleanup()).catch(()=>{})}
 function onNotes(){const n=S.notes.get(E.nid);if(!n){toast('This note was deleted.');goLibrary();return}E.note=n;
-  const t=$('#ed-title');if(t&&document.activeElement!==t)t.value=n.title||'';
+  const t=$('#ed-title');if(t&&document.activeElement!==t)t.value=n.title||'';if(E.panel==='marks'&&JSON.stringify(n.bookmarks||[])!==BM.sig)bmPanelSync();
   const ids=n.pageIds||[];if(ids.join()!==E.order.join()){E.order=ids.slice();buildPages()}}
 /* page updates from the cloud; pages whose ink is split across part documents are put back together first */
 function onPagesSnap(snap){const nid=E.nid,first=E.firstLoad;E.firstLoad=false;const list=[];
@@ -4683,6 +4742,7 @@ function buildTop(){
   top.append(h('div',{class:'ed-right'},E.quickEl,
     h('button',{class:'ib','aria-label':'Zoom out',onclick:()=>setZoom(E.zoom/1.2)},ico('zout')),E.zoomEl,h('button',{class:'ib','aria-label':'Zoom in',onclick:()=>setZoom(E.zoom*1.2)},ico('zin')),
     h('button',{class:'ib'+(E.showThumbs?' on':''),id:'b-thumbs','aria-label':'Page thumbnails',onclick:e=>{E.showThumbs=!E.showThumbs;setPref('thumbs',E.showThumbs);E.thumbsEl.hidden=!E.showThumbs;e.currentTarget.classList.toggle('on',E.showThumbs);if(E.showThumbs)buildThumbs();onResize()}},ico('pages')),
+    h('button',{class:'ib',id:'b-marks','aria-label':'Bookmarks',title:'Bookmarks',onclick:()=>togglePanel('marks')},ico('bookmark')),
     h('button',{class:'ib',id:'b-find','aria-label':'Find in document',onclick:()=>togglePanel('find')},ico('search')),
     h('button',{class:'ib',id:'b-comments','aria-label':'Comments',onclick:()=>togglePanel('comments')},ico('note')),
     h('button',{class:'ib',id:'b-ai','aria-label':S.sample?'Ask AI about this document':'Ask Claude about this page',title:S.sample?'Ask AI':'Ask Claude',onclick:()=>togglePanel('ai')},ico('spark')),
@@ -4872,7 +4932,7 @@ function scrollWork(){if(!E.scroller||!E.nid)return;E.scrollBusyUntil=Date.now()
   if(E.offs.length!==E.order.length||E.offs.some(o=>!o))measureOffs();const O=E.offs;let lo=0,hi=O.length-1;
   while(lo<hi){const m=(lo+hi)>>1;if(O[m]&&O[m][1]<mid)lo=m+1;else hi=m}let best=lo;
   if(best>0&&O[best]&&O[best-1]&&Math.abs((O[best-1][0]+O[best-1][1])/2-mid)<Math.abs((O[best][0]+O[best][1])/2-mid))best--;
-  if(best!==E.current||!E.ind.textContent){if(best!==E.current&&E.panel==='ai'&&!S.sample&&CL.scope==='page')setTimeout(clRefresh,0);E.current=best;E.ind.textContent='Page '+(best+1)+' of '+E.order.length;$$('.thumb',E.thumbsEl).forEach((t,i)=>t.classList.toggle('on',i===best))}
+  if(E.panel==='marks')bmActive();if(best!==E.current||!E.ind.textContent){if(best!==E.current&&E.panel==='ai'&&!S.sample&&CL.scope==='page')setTimeout(clRefresh,0);E.current=best;E.ind.textContent='Page '+(best+1)+' of '+E.order.length;$$('.thumb',E.thumbsEl).forEach((t,i)=>t.classList.toggle('on',i===best))}
   E.ind.classList.remove('idle');clearTimeout(E.indT);E.indT=setTimeout(()=>E.ind&&E.ind.classList.add('idle'),1400);if(floatEl&&floatEl.dataset.kind!=='keep')hideFloat()}
 function scrollToPage(i,flash){const pv=E.views.get(E.order[i]);if(!pv)return;E.scroller.scrollTo({top:pv.el.offsetTop-20,behavior:'smooth'});if(flash){pv.el.classList.remove('flash');void pv.el.offsetWidth;pv.el.classList.add('flash')}}
 function buildThumbs(){if(!E.thumbsEl||E.thumbsEl.hidden)return;E.thumbsEl.innerHTML='';E.order.forEach((id,i)=>{const pg=E.pages.get(id);if(!pg)return;const a=pg.aspect||PAGE_ASPECT,r=(pg.rot||0)%180;
@@ -5735,6 +5795,7 @@ function makeMark(pv,range,text,style){const rects=selRectsL(pv,range).map(q=>[q
 
 /* ---------- page menu / add / delete ---------- */
 function pageMenu(btn,id){const i=E.order.indexOf(id);const pg=E.pages.get(id);openMenu(btn,[
+  E.readOnly?null:{icon:'bookmark',label:'Bookmark this page',fn:()=>bmAdd(id,0)},
   {icon:'plus',label:'Add page after',fn:()=>addPage(i+1)},{icon:'copy',label:'Duplicate page',fn:()=>duplicatePage(i)},
   {icon:'rotate',label:'Rotate right',fn:()=>rotatePage(id,90)},{icon:'rotl',label:'Rotate left',fn:()=>rotatePage(id,-90)},
   pg&&pg.kind==='paper'?{icon:'pages',label:'Change paper…',fn:()=>paperDialog(id)}:null,
@@ -5775,10 +5836,10 @@ function spaceOff(){if(!E.spaceHand)return;E.spaceHand=false;applyRootClass()}
 
 /* ---------- side panels: find, comments, AI ---------- */
 function togglePanel(kind,force){if(kind==='find')setTimeout(ensureTextLayers,0);if(E.panel===kind&&!force){E.panel=null;E.panelEl&&E.panelEl.remove();E.panelEl=null}else{E.panel=kind;renderPanel()}
-  for(const k of ['find','comments','ai']){const b=$('#b-'+k);if(b)b.classList.toggle('on',E.panel===k)}setTimeout(onResize,10)}
+  for(const k of ['find','comments','ai','marks']){const b=$('#b-'+k);if(b)b.classList.toggle('on',E.panel===k)}setTimeout(onResize,10)}
 function renderPanel(){if(!E.panel)return;if(!E.panelEl){E.panelEl=h('aside',{class:'panel'});E.body.append(E.panelEl)}const P0=E.panelEl;P0.innerHTML='';
   const head=(t)=>h('header',null,h('h3',null,t),h('button',{class:'ib','aria-label':'Close panel',onclick:()=>togglePanel(E.panel)},ico('x')));
-  if(E.panel==='find')findPanel(P0,head);else if(E.panel==='comments')commentsPanel(P0,head);else if(E.panel==='ai'&&!S.sample)claudePanel(P0,head);else if(E.panel==='ai')AI.panel(P0,head,aiContext,{title:()=>E.note.title,folderId:()=>E.note.folderId,subjectId:()=>E.note.subjectId})}
+  if(E.panel==='find')findPanel(P0,head);else if(E.panel==='marks')bmPanel(P0,head);else if(E.panel==='comments')commentsPanel(P0,head);else if(E.panel==='ai'&&!S.sample)claudePanel(P0,head);else if(E.panel==='ai')AI.panel(P0,head,aiContext,{title:()=>E.note.title,folderId:()=>E.note.folderId,subjectId:()=>E.note.subjectId})}
 let findQ='';
 function findPanel(P0,head){const inp=h('input',{class:'input',id:'find-q',type:'search',placeholder:'Search this document',value:findQ,'aria-label':'Search this document'});const out=h('div',{class:'pbody'});
   P0.append(head('Find'),h('div',{style:{padding:'10px 14px 0'}},inp),out);const run=debounce(async()=>{findQ=inp.value.trim();out.innerHTML='';clearHits();if(findQ.length<2){out.append(h('p',{style:{color:'var(--muted)',margin:0,fontSize:'13.5px'}},'Type at least two letters. Searches PDF text, text boxes, comments, highlights and converted handwriting.'));return}
@@ -5837,6 +5898,39 @@ function claudePanel(P0,head){P0.append(head('Ask Claude'));const body=h('div',{
   const go=h('a',{class:'cl-go',href:'https://claude.ai/new',target:'_blank',rel:'noopener'},ico('spark'),'Ask Claude');go.addEventListener('click',e=>clGo(e,go,ta.value));
   body.append(h('div',null,h('div',{class:'cl-lbl'},'Your question'),ta),go,h('div',{class:'cl-status','aria-live':'polite'}));
   CL.ctx=null;clStatus();clRefresh()}
+/* ---------- bookmarks panel ---------- */
+const BM={edit:false,sig:''};
+const bmList=()=>(E.note&&E.note.bookmarks||[]).filter(b=>E.order.includes(b.pid));
+function bmSave(list,manual){const n=E.note;n.bookmarks=list;BM.sig=JSON.stringify(list);const patch={bookmarks:list};if(manual)patch.updatedAt=Date.now();dbUpd(notePath(E.nid),patch).catch(()=>toast('Could not save the bookmark.','err'))}
+function bmPos(b){const pv=E.views.get(b.pid);return pv?pv.el.offsetTop+(pv.rot?0:(b.y||0)*pv.s):0}
+function bmGo(b){const pv=E.views.get(b.pid);if(!pv)return;E.scroller.scrollTo({top:Math.max(0,bmPos(b)-12),behavior:'smooth'});pv.el.classList.remove('flash');void pv.el.offsetWidth;pv.el.classList.add('flash')}
+function bmAdd(pid,y){const i=E.order.indexOf(pid);if(i<0)return;const b={id:uid(),pid,y:Math.round(y||0),title:'Page '+(i+1),lv:1};
+  const pos=new Map(E.order.map((p,k)=>[p,k]));const list=bmList().concat([b]).sort((a,c)=>(pos.get(a.pid)-pos.get(c.pid))||(a.y||0)-(c.y||0));bmSave(list,true);
+  if(E.panel!=='marks')togglePanel('marks',true);else bmPanelSync();setTimeout(()=>{const inp=E.panelEl&&E.panelEl.querySelector('.bm-row[data-id="'+b.id+'"] input');if(inp){inp.focus();inp.select()}else bmRename(b)},60);toast('Bookmarked page '+(i+1)+'.')}
+function bmRename(b){BM.edit=true;bmPanelSync();setTimeout(()=>{const inp=E.panelEl&&E.panelEl.querySelector('.bm-row[data-id="'+b.id+'"] input');if(inp){inp.focus();inp.select()}},30)}
+function bmActive(){if(!E.panelEl)return;const y=E.scroller.scrollTop+E.scroller.clientHeight*.25;let cur=null;for(const b of bmList())if(bmPos(b)<=y)cur=b.id;
+  for(const r of E.panelEl.querySelectorAll('.bm-row'))r.classList.toggle('on',r.dataset.id===cur)}
+function bmPanelSync(){if(E.panel!=='marks'||!E.panelEl)return;const L=E.panelEl.querySelector('.bm-list'),st=L?L.scrollTop:0;renderPanel();const L2=E.panelEl.querySelector('.bm-list');if(L2)L2.scrollTop=st}
+function bmPanel(P0,head){const list=bmList();BM.sig=JSON.stringify(E.note.bookmarks||[]);const ro=E.readOnly;
+  P0.append(head('Bookmarks'+(list.length?' · '+list.length:'')));
+  if(!ro)P0.append(h('div',{class:'bm-tools'},h('button',{class:'btn primary sm',onclick:()=>{const pv=E.views.get(E.order[E.current]);if(!pv)return;const y=Math.max(0,(E.scroller.scrollTop-pv.el.offsetTop)/pv.s);bmAdd(pv.id,y)}},ico('plus'),'Bookmark here'),
+    list.length?h('button',{class:'btn sm'+(BM.edit?' on':''),onclick:()=>{BM.edit=!BM.edit;bmPanelSync()}},BM.edit?'Done':'Edit'):null));
+  const body=h('div',{class:'pbody bm-list'});P0.append(body);
+  if(!list.length){const isPdf=E.order.some(id=>{const p=E.pages.get(id);return p&&p.kind==='pdf'});
+    body.append(h('div',{class:'empty',style:{padding:'30px 10px'}},h('div',{class:'art'},ico('bookmark')),h('h3',null,'No bookmarks yet'),
+      h('p',{style:{margin:0}},isPdf?'Folio can find the chapters and headings in this PDF for you, or tap Bookmark here to mark the page you are on.':'Tap Bookmark here to mark the page you are on.'),
+      isPdf&&!ro?h('button',{class:'btn',style:{marginTop:'6px'},onclick:async e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Looking for headings…';const marks=await makeBookmarks(E.nid);
+        bmSave(bmList().filter(x=>!x.auto).concat(marks),false);dbUpd(notePath(E.nid),{bmAuto:'done'}).catch(()=>{});toast(marks.length?'Added '+marks.length+' bookmarks.':'No headings found in this PDF. Use Bookmark here instead.');bmPanelSync()}},ico('spark'),'Find bookmarks automatically'):null));return}
+  for(const b of list){const i=E.order.indexOf(b.pid);
+    const row=h('div',{class:'bm-row lv'+(b.lv||1),dataset:{id:b.id},role:BM.edit?null:'button',tabindex:BM.edit?null:'0'});
+    if(BM.edit&&!ro){const inp=h('input',{class:'input',value:b.title||'','aria-label':'Bookmark name'});const commit=()=>{const v=inp.value.trim()||('Page '+(i+1));if(v!==b.title){b.title=v;delete b.auto;bmSave(bmList(),true)}};
+      inp.addEventListener('change',commit);inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur()}});
+      row.append(inp,h('span',{class:'bm-pn'},String(i+1)),h('button',{class:'ib','aria-label':'Delete bookmark',title:'Delete',onclick:()=>{bmSave(bmList().filter(x=>x.id!==b.id),true);bmPanelSync()}},ico('trash')))}
+    else{row.append(h('span',{class:'bm-t'},b.title||('Page '+(i+1))),h('span',{class:'bm-pn'},String(i+1)));row.addEventListener('click',()=>{bmGo(b);if(innerWidth<700)togglePanel('marks')});row.addEventListener('keydown',e=>{if(e.key==='Enter')bmGo(b)})}
+    body.append(row)}
+  if(BM.edit&&!ro&&E.order.some(id=>{const p=E.pages.get(id);return p&&p.kind==='pdf'}))P0.append(h('div',{class:'pfoot'},h('button',{class:'btn',onclick:async e=>{const btn=e.currentTarget;btn.disabled=true;btn.textContent='Looking for headings…';
+    const marks=await makeBookmarks(E.nid);bmSave(bmList().filter(x=>!x.auto).concat(marks).sort((a,c)=>(E.order.indexOf(a.pid)-E.order.indexOf(c.pid))||(a.y||0)-(c.y||0)),true);BM.edit=false;toast('Automatic bookmarks found again: '+marks.length+'. Yours were kept.');bmPanelSync()}},ico('refresh'),'Find automatic bookmarks again')));
+  setTimeout(bmActive,0)}
 function commentsPanel(P0,head){const all=cmAll(true),nC=all.filter(e=>e.it.type==='note').length,nH=all.length-nC;
   P0.append(head('Comments'+(all.length?' · '+all.length:'')));
   const inp=h('input',{class:'input',type:'search',placeholder:'Search comments',value:CM.q,'aria-label':'Search comments'});
