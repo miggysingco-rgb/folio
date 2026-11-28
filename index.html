@@ -308,7 +308,10 @@ body:has(.ed) .fo-pill{display:none}
 .cmt-card.in{opacity:1;transform:none}
 .cmt-card.off{visibility:hidden}
 .cmt-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--cc,#FFD43B)}
-.cc-head{display:flex;align-items:center;gap:4px;padding:8px 6px 4px 16px;font-size:12px;color:var(--muted)}
+.cc-head{display:flex;align-items:center;gap:4px;padding:8px 6px 4px 16px;font-size:12px;color:var(--muted);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.cc-head .ib{cursor:pointer}
+.cmt-card.moving{transition:none;box-shadow:0 24px 60px -14px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.1)}
+.cmt-card.moving .cc-head{cursor:grabbing}
 .cc-head b{color:var(--ink);font-weight:700;margin-right:4px}
 .cc-head .sp{flex:1}
 .cc-head .ib{width:28px;height:28px;border-radius:8px}
@@ -3929,7 +3932,7 @@ var FOUI = (function () {
   if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('offline cache', e); }); });
     /* the saved copy opens instantly; when a newer Folio has been downloaded in the background, offer it */
-    window.FOLIO_BUILD = 'folio-shell 2026-11-27 00:40 bookmarks';
+    window.FOLIO_BUILD = 'folio-shell 2026-11-28 22:50 card-drag';
     navigator.serviceWorker.addEventListener('message', function (e) {
       var d = e.data || {}; if (d.type !== 'folio-update' || (d.version && d.version === window.FOLIO_BUILD) || document.getElementById('fo-upd')) return;
       var b = document.createElement('button'); b.id = 'fo-upd'; b.type = 'button'; b.textContent = 'New version of Folio ready \u00b7 Tap to reload';
@@ -5504,7 +5507,7 @@ function cmPinEl(pv,it){const mk=it.type==='mark',t=cmText(it).trim();
   el.addEventListener('click',e=>{e.stopPropagation();if(e.detail===0){if(CM.card&&CM.id===it.id)cmClose();else cmOpen(pv,it)}});/* keyboard */
   return el}
 function cmPlacePin(pv,it,el){const [x,y]=cmXY(it),s=pv.s;el.style.left=(x*s+(it.type==='mark'?3:0))+'px';el.style.top=y*s+'px'}
-function cmOpen(pv,it,o={}){cmClose();if(!pv||!it)return;CM.pid=pv.id;CM.id=it.id;CM.isNew=o.isNew||null;
+function cmOpen(pv,it,o={}){cmClose();if(!pv||!it)return;CM.pid=pv.id;CM.id=it.id;CM.isNew=o.isNew||null;CM.dx=0;CM.dy=0;
   const card=h('div',{class:'cmt-card',role:'dialog'});CM.card=card;document.body.append(card);
   cmBuild(!E.readOnly&&(o.edit||!cmText(it).trim()));cmPlace();requestAnimationFrame(()=>card.classList.add('in'));
   for(const p of $$('.cpin',pv.el))p.classList.toggle('on',p.dataset.id===it.id);
@@ -5518,10 +5521,10 @@ function cmBuild(edit){const card=CM.card,it=cmItem();if(!card)return;if(!it){cm
   card.style.setProperty('--cc',it.c||'#FFD43B');card.setAttribute('aria-label',cmKind(it)+' on page '+(i+1));card.innerHTML='';CM.ta=null;
   const list=cmAll(false),k=list.findIndex(e=>e.it===it);
   const nav=(d)=>{const e=list[k+d];if(!e)return;cmClose();cmGoto(e)};
-  card.append(h('div',{class:'cc-head'},h('b',null,cmKind(it)),h('span',null,'Page '+(i+1)+(it.at?' · '+ago(it.at):'')),h('span',{class:'sp'}),
+  const head=h('div',{class:'cc-head',title:'Drag here to move'},h('b',null,cmKind(it)),h('span',null,'Page '+(i+1)+(it.at?' · '+ago(it.at):'')),h('span',{class:'sp'}),
     h('button',{class:'ib up','aria-label':'Previous comment',title:'Previous comment',disabled:k<=0,onclick:()=>nav(-1)},ico('caret')),
     h('button',{class:'ib','aria-label':'Next comment',title:'Next comment',disabled:k<0||k>=list.length-1,onclick:()=>nav(1)},ico('caret')),
-    h('button',{class:'ib','aria-label':'Close',title:'Close (Esc)',onclick:()=>cmClose()},ico('x'))));
+    h('button',{class:'ib','aria-label':'Close',title:'Close (Esc)',onclick:()=>cmClose()},ico('x')));cmDragWire(head);card.append(head);
   if(it.type==='mark'&&it.text)card.append(h('div',{class:'cc-quote'},'“'+it.text.slice(0,400)+(it.text.length>400?'…':'')+'”'));
   const body=h('div',{class:'cc-body'});card.append(body);const t=cmText(it);
   if(edit){const ta=h('textarea',{'aria-label':'Comment',placeholder:it.type==='mark'?'Add a comment to this highlight…':'Write a comment…'});ta.value=t;CM.ta=ta;body.append(ta);try{ta.focus({preventScroll:true})}catch(_){}/* now, inside the tap: iPad only opens the keyboard from a user gesture */
@@ -5541,7 +5544,13 @@ function cmPlace(){const card=CM.card,it=cmItem(),pv=E.views.get(CM.pid);if(!car
   const w=card.offsetWidth,hh=card.offsetHeight,right=E.panelEl&&E.panel?E.panelEl.getBoundingClientRect().left:innerWidth;
   let x=sx+pinW+8,y=top0-6;if(x+w>right-8)x=sx-w-10;
   if(x<8){x=clamp(sx-w/2,8,right-w-8);y=top0+pinW+8;if(y+hh>innerHeight-8)y=top0-hh-10}
-  y=clamp(y,Math.max(8,sr.top+4),innerHeight-hh-8);card.style.left=x+'px';card.style.top=y+'px'}
+  x=clamp(x+(CM.dx||0),8,innerWidth-w-8);y=clamp(y+(CM.dy||0),Math.max(8,sr.top+4),innerHeight-hh-8);card.style.left=x+'px';card.style.top=y+'px'}
+/* drag the card by its top bar (mouse, finger or Pencil); it keeps that offset from its pin while open, so it still follows the page */
+function cmDragWire(head){head.addEventListener('pointerdown',e=>{if(e.button>0||e.target.closest('button')||!CM.card||CM.card.classList.contains('sheet'))return;e.preventDefault();
+  const x0=e.clientX,y0=e.clientY,dx0=CM.dx||0,dy0=CM.dy||0;try{head.setPointerCapture(e.pointerId)}catch(_){}CM.card.classList.add('moving');
+  const mv=ev=>{CM.dx=dx0+ev.clientX-x0;CM.dy=dy0+ev.clientY-y0;cmPlace()};
+  const up=()=>{head.removeEventListener('pointermove',mv);head.removeEventListener('pointerup',up);head.removeEventListener('pointercancel',up);if(CM.card)CM.card.classList.remove('moving')};
+  head.addEventListener('pointermove',mv);head.addEventListener('pointerup',up);head.addEventListener('pointercancel',up)})}
 function cmCommit(){const ta=CM.ta,it=cmItem();if(!ta||!it)return;const v=ta.value.trim();if(v===cmText(it).trim())return;
   if(!CM.isNew)pushUndo(CM.pid);if(it.type==='note'){it.text=v;it.at=Date.now()}else it.note=v;CM.isNew=null;markDirty(CM.pid);
   const pv=E.views.get(CM.pid);if(pv)renderItems(pv);cmPanelSync()}
