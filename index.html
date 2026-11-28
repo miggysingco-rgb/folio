@@ -3932,7 +3932,7 @@ var FOUI = (function () {
   if (/^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('offline cache', e); }); });
     /* the saved copy opens instantly; when a newer Folio has been downloaded in the background, offer it */
-    window.FOLIO_BUILD = 'folio-shell 2026-11-28 22:50 card-drag';
+    window.FOLIO_BUILD = 'folio-shell 2026-11-28 23:20 smooth-select';
     navigator.serviceWorker.addEventListener('message', function (e) {
       var d = e.data || {}; if (d.type !== 'folio-update' || (d.version && d.version === window.FOLIO_BUILD) || document.getElementById('fo-upd')) return;
       var b = document.createElement('button'); b.id = 'fo-upd'; b.type = 'button'; b.textContent = 'New version of Folio ready \u00b7 Tap to reload';
@@ -4848,7 +4848,7 @@ function makeView(id){const el=h('div',{class:'pg',dataset:{id}});const inner=h(
   inner.append(bg,tl,ink,hl,items,live,cap,tape,notes,edl);const label=h('div',{class:'pg-label'});
   const tools=E.readOnly?null:h('div',{class:'pg-tools'},h('button',{class:'ib','aria-label':'Page options',onclick:e=>{e.stopPropagation();pageMenu(e.currentTarget,id)}},ico('more')));
   el.append(skel,inner,label,tools);const pv={id,el,inner,bg,ink,live,tl,hl,tape,items,notes,edl,skel,cap,label,rendered:false,visible:false,token:0};
-  tl.addEventListener('pointerdown',()=>{tl.classList.add('selecting');prevRange=null;const off=()=>{tl.classList.remove('selecting');const eoc=$('.endOfContent',tl);if(eoc)tl.append(eoc);removeEventListener('pointerup',off)};addEventListener('pointerup',off)});
+  tl.addEventListener('pointerdown',e=>{if(gsDown(e,pv))return;tl.classList.add('selecting');prevRange=null;const off=()=>{tl.classList.remove('selecting');const eoc=$('.endOfContent',tl);if(eoc)tl.append(eoc);removeEventListener('pointerup',off)};addEventListener('pointerup',off)});
   cap.addEventListener('pointerdown',e=>down(e,pv));cap.addEventListener('lostpointercapture',e=>{if(E.ptr&&E.ptr.id===e.pointerId&&!E.ptr.lostOk)setTimeout(()=>{if(E.ptr&&E.ptr.id===e.pointerId)finishPtr(E.ptr)},50)});cap.addEventListener('pointerleave',e=>{if(!E.ptr&&e.pointerType==='pen')clearLive(pv)});
   const noStylusScroll=e=>{if(E.tool!=='select'&&e.cancelable&&[...e.changedTouches].some(t=>t.touchType==='stylus'))e.preventDefault()};cap.addEventListener('touchstart',noStylusScroll,{passive:false});cap.addEventListener('touchmove',noStylusScroll,{passive:false});cap.addEventListener('pointermove',e=>move(e,pv));cap.addEventListener('pointerup',e=>up(e,pv));cap.addEventListener('pointercancel',e=>up(e,pv,true));
   el.addEventListener('pointerdown',e=>{if((E.tool==='select'||E.tool==='edit')&&(e.target===el||e.target===inner||e.target===items||e.target===edl||e.target.classList.contains('bg')||e.target===tl))deselectItem()});
@@ -4926,7 +4926,7 @@ function freePage(pv){if(!pv.rendered||pv.busy)return;if(E.editing&&E.editing.pv
   for(const c of [pv.ink,pv.live]){c.width=0;c.height=0}if(E.livePv===pv)E.livePv=null;pv.tl.innerHTML='';pv.edl.innerHTML='';pv.tlDone=false;pv.rendered=false;
   const pg=E.pages.get(pv.id);if(pg&&pg.kind==='pdf'&&pdfCache.has(pg.assetId))loadPdf(pg.assetId).then(d=>d.getPage(pg.pdfPage)).then(p=>p.cleanup()).catch(()=>{})}
 async function renderTextLayer(pv,pg){pv.tlDone=true;try{const lib=await pdfjs();const doc=await loadPdf(pg.assetId);const p=await doc.getPage(pg.pdfPage);const vp1=p.getViewport({scale:1});pv.tlW=vp1.width;const vp=p.getViewport({scale:pv.iw/vp1.width});
-  pv.tl.innerHTML='';pv.tl.style.setProperty('--scale-factor',vp.scale);pv.tl.style.setProperty('--total-scale-factor',vp.scale);
+  pv.tl.innerHTML='';pv.gsIdx=null;pv.tl.style.setProperty('--scale-factor',vp.scale);pv.tl.style.setProperty('--total-scale-factor',vp.scale);
   const tl=new lib.TextLayer({textContentSource:p.streamTextContent(),container:pv.tl,viewport:vp});await tl.render();pv.tl.append(h('div',{class:'endOfContent'}));markHits(pv)}catch(e){console.warn('text layer',e)}}
 function drawInk(pv,exclude){const pg=E.pages.get(pv.id);if(!pg||!pv.ink.width)return;const c=pv.ink.getContext('2d');c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pv.ink.width,pv.ink.height);
   const s=pv.s*pv.dpr;if((pg.items||[]).some(i=>UNDER.has(i.type)||i.type==='pdftext'))drawItems(c,pg,s,{pass:'under',skip:isHlMark});pv.dark=darkPaper(pv);drawStrokes(c,exclude?(pg.strokes||[]).filter((_,i)=>!exclude.has(i)):pg.strokes,s,pv);hlScratchFree();if(E.sel&&E.sel.pid===pv.id&&!exclude)drawSelBox(pv)}
@@ -5724,6 +5724,46 @@ function drawSelHl(){const sel=getSelection();const range=sel&&sel.rangeCount&&!
     ov.replaceChildren(...bands.map(q=>{const i=document.createElement('i');i.style.cssText=`left:${q.x*s}px;top:${q.y*s}px;width:${q.w*s}px;height:${q.h*s}px`;return i}));used.add(pv)}
   for(const pv of selHlOn)if(!used.has(pv)&&pv.selhl)pv.selhl.replaceChildren();selHlOn.clear();for(const pv of used)selHlOn.add(pv)}
 
+/* ---------- smooth text selection (Nov 28) ----------
+   The browser selects only while the pointer is over a text box, and pdf.js text boxes have gaps between words, lines and
+   columns, so a drag froze in every gap and jumped when it reached the next word ("stiff"). For mouse and Apple Pencil,
+   Folio now drives the selection itself, like Acrobat or Goodnotes: every frame it takes the character nearest the pointer
+   (nearest line first, then nearest spot on that line, also in margins and gaps) and sets the selection from where you
+   started to there. Dragging near the top or bottom edge scrolls. Shift-click extends; double/triple-click and finger
+   long-press stay native (a finger drag scrolls). The highlight bands, the menu and Highlight/Underline/… are unchanged. */
+const GS={on:false};
+function gsIndex(pv){const tl=pvTextLayer(pv);if(!tl)return null;const tr=tl.getBoundingClientRect();if(!tr.width)return null;
+  const I=pv.gsIdx;if(I&&Math.abs(I.w-tr.width)<.5&&I.tl===tl)return I;const spans=[];
+  for(const sp of tl.querySelectorAll('span')){if(sp.classList.contains('markedContent'))continue;const t=sp.firstChild;if(!t||t.nodeType!==3||!t.nodeValue)continue;
+    const r=sp.getBoundingClientRect();if(r.width<.5||r.height<.5)continue;spans.push({t,l:r.left-tr.left,r:r.right-tr.left,top:r.top-tr.top,b:r.bottom-tr.top,cy:(r.top+r.bottom)/2-tr.top,h:r.height})}
+  spans.sort((a,b)=>a.cy-b.cy);const lines=[];
+  for(const sp of spans){const L=lines[lines.length-1];if(L&&Math.abs(sp.cy-L.cy)<Math.min(sp.h,L.h)*.5){L.sp.push(sp);L.top=Math.min(L.top,sp.top);L.b=Math.max(L.b,sp.b)}else lines.push({cy:sp.cy,h:sp.h,top:sp.top,b:sp.b,sp:[sp]})}
+  for(const L of lines)L.sp.sort((a,b)=>a.l-b.l);return pv.gsIdx={w:tr.width,tl,lines}}
+/* caret (text node + offset) nearest to a screen point on one page */
+function gsCaret(pv,x,y){const I=gsIndex(pv);if(!I||!I.lines.length)return null;const tr=I.tl.getBoundingClientRect(),lx=x-tr.left,ly=y-tr.top;
+  let L=null,bd=1e9;for(const l of I.lines){const d=ly<l.top?l.top-ly:ly>l.b?ly-l.b:0;if(d<bd){bd=d;L=l;if(!d)break}}
+  const S=L.sp,f=S[0],z=S[S.length-1];if(lx<=f.l)return{node:f.t,off:0,d:bd};if(lx>=z.r)return{node:z.t,off:z.t.nodeValue.length,d:bd};
+  let sp=null;for(let i=0;i<S.length;i++){const a=S[i];if(lx>=a.l&&lx<=a.r){sp=a;break}const b=S[i+1];if(b&&lx>a.r&&lx<b.l)return lx-a.r<b.l-lx?{node:a.t,off:a.t.nodeValue.length,d:bd}:{node:b.t,off:0,d:bd}}
+  if(!sp)return{node:z.t,off:z.t.nodeValue.length,d:bd};
+  const t=sp.t,n=t.nodeValue.length,rg=document.createRange(),R=k=>{if(k<=0)return sp.l+tr.left;rg.setStart(t,0);rg.setEnd(t,k);return rg.getBoundingClientRect().right};
+  let lo=0,hi=n;while(lo<hi){const m=(lo+hi)>>1;if(R(m+1)<x)lo=m+1;else hi=m}/* first k whose right edge reaches x */
+  const k=Math.min(n,lo+1),a=R(k-1),b=R(k);return{node:t,off:x-a<b-x?k-1:k,d:bd}}
+function gsPageAt(x,y){let best=null,bd=1e9;for(const pv of E.views.values()){if(!pv.visible||!pvTextLayer(pv))continue;const r=pv.el.getBoundingClientRect();const d=y<r.top?r.top-y:y>r.bottom?y-r.bottom:0;if(d<bd){bd=d;best=pv}}return best}
+function gsDown(e,pv){if(e.button!==0||e.pointerType==='touch'||e.detail>=2||E.tool!=='select'&&E.tool!=='find')return false;
+  const sel=getSelection();let anchor=null;if(e.shiftKey&&sel.rangeCount&&!sel.isCollapsed)anchor={node:sel.anchorNode,off:sel.anchorOffset};
+  if(!anchor){anchor=gsCaret(pv,e.clientX,e.clientY);const lh=(pv.gsIdx&&pv.gsIdx.lines[0]&&pv.gsIdx.lines[0].h)||12;if(!anchor||anchor.d>lh*3)return false}/* far from any text: leave it to the page */
+  e.preventDefault();const tl=pvTextLayer(pv);try{tl.setPointerCapture(e.pointerId)}catch(_){}hideFloat();
+  Object.assign(GS,{on:true,id:e.pointerId,anchor,x:e.clientX,y:e.clientY,raf:0,auto:0,moved:false,tl});
+  if(e.shiftKey)gsUpdate();else sel.removeAllRanges();
+  const mv=ev=>{if(ev.pointerId!==GS.id)return;const evs=ev.getCoalescedEvents?ev.getCoalescedEvents():[];const q=evs.length?evs[evs.length-1]:ev;GS.x=q.clientX;GS.y=q.clientY;
+    if(!GS.moved&&Math.hypot(GS.x-e.clientX,GS.y-e.clientY)<3)return;GS.moved=true;if(!GS.raf)GS.raf=requestAnimationFrame(gsFrame)};
+  const up=ev=>{if(ev.pointerId!==GS.id)return;tl.removeEventListener('pointermove',mv);tl.removeEventListener('pointerup',up);tl.removeEventListener('pointercancel',up);
+    cancelAnimationFrame(GS.raf);GS.raf=0;GS.on=false;if(GS.moved)gsUpdate()};
+  tl.addEventListener('pointermove',mv);tl.addEventListener('pointerup',up);tl.addEventListener('pointercancel',up);return true}
+function gsUpdate(){const pv=gsPageAt(GS.x,GS.y);if(!pv)return;const c=gsCaret(pv,GS.x,GS.y);if(!c)return;try{getSelection().setBaseAndExtent(GS.anchor.node,GS.anchor.off,c.node,c.off)}catch(_){}}
+function gsFrame(){GS.raf=0;if(!GS.on)return;const sc=E.scroller,r=sc.getBoundingClientRect(),m=44;let v=0;
+  if(GS.y<r.top+m)v=-Math.min(28,(r.top+m-GS.y)*.5);else if(GS.y>r.bottom-m)v=Math.min(28,(GS.y-(r.bottom-m))*.5);/* drag near an edge: scroll */
+  if(v)sc.scrollTop+=v;gsUpdate();if(v)GS.raf=requestAnimationFrame(gsFrame)}
 /* PDF text selection → highlight / underline / strikethrough / comment / ask AI */
 let selT=null,prevRange=null;
 /* keeps a drag-selection from jumping to the end of the page (same approach as the pdf.js viewer) */
